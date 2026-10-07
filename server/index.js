@@ -2,6 +2,7 @@
 import { createInterface } from 'node:readline';
 import { loadConfig } from './config.js';
 import { WebcoreClient } from './client.js';
+import { HubitatClient } from './hubitat.js';
 import { hashJson, prepareUpdate } from './piston.js';
 import { runDiagnostics } from './diagnostics.js';
 import { getVerifiedPiston, PistonSelectionStore } from './selection.js';
@@ -14,6 +15,10 @@ let currentClient;
 let currentConfigHash;
 
 const tools = [
+  { name: 'hubitat_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices explicitly authorized to the configured Hubitat Maker API instance. Read-only; does not execute device commands.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+
+  { name: 'hubitat_get_device', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Get the current Maker API details and attributes for one explicitly authorized Hubitat device by exact device ID. Read-only; does not execute device commands.', inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false } },
+
   { name: 'webcore_status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Check the configured local or explicitly approved Hubitat Cloud connection. Report live webcore_version (coreVersion) and webcore_he_version (heVersion), separately from plugin_version. Call before drafting conditions; do not infer the live webCoRE version from the bundled reference or a screenshot. Uses a dedicated dashboard session; snapshot_source distinguishes a new hub snapshot from a fresh unchanged confirmation. HTTP 200 alone is insufficient.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_diagnose', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Run read-only connection, dashboard response, piston-list, and authorized-device checks. Reports the running plugin_version and upload limits so installed/local version mismatches can be identified. Call after a tool error, unexpected empty result, or mismatch with the CLI. It retries empty piston results and returns sanitized status/content-type/error details without endpoint URLs, access tokens, session tokens, piston names, or device IDs. Upload failures also carry request_trace in their error details; do not perform a write just to diagnose it. Uses the shared dashboard change-detection protocol. transport_ok describes HTTP/parsing only; dashboard ok requires a usable session snapshot. Inspect snapshot_source and load_attempts. Missing/malformed/duplicate piston records are errors, never zero counts.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices selected and authorized in this webCoRE instance, with capabilities, attributes, current values, commands and argument constraints.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -41,6 +46,20 @@ async function invoke(name, a) {
     currentConfigHash = configHash;
   }
   const c = currentClient;
+  if (name === 'hubitat_list_devices' || name === 'hubitat_get_device') {
+    if (!config.hubitat) throw new Error('Hubitat Maker API is not configured.');
+
+    const hubitat = new HubitatClient(config.hubitat);
+
+    if (name === 'hubitat_list_devices') {
+      return { devices: await hubitat.listDevices() };
+    }
+
+    if (name === 'hubitat_get_device') {
+      return hubitat.getDevice(a.id);
+    }
+  }
+
   switch (name) {
     case 'webcore_status': { const r = await c.getDashboard(); return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo.snapshot_source, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null }; }
     case 'webcore_diagnose': return runDiagnostics(c);

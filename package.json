@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server/index.js",
     "test": "node --test",
-    "check": "node --check server/index.js && node --check server/client.js && node --check server/piston.js && node --check server/diagnostics.js && node --check server/selection.js && node --check server/update.js && node --check server/cli.js && node --check server/language.js && node --check server/verification.js"
+    "check": "node --check server/index.js && node --check server/client.js && node --check server/hubitat.js && node --check server/piston.js && node --check server/diagnostics.js && node --check server/selection.js && node --check server/update.js && node --check server/cli.js && node --check server/language.js && node --check server/verification.js"
   },
   "engines": {
     "node": ">=24"
