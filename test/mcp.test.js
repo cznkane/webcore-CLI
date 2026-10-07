@@ -31,4 +31,28 @@ test('stdio MCP exposes list scopes, guarded selection, and diagnostics', async 
   assert.ok(diagnostics);
   assert.match(diagnostics.description, /read-only/);
   assert.match(diagnostics.description, /without endpoint URLs, access tokens/);
+  const readOnlyNames = [
+    'webcore_status', 'webcore_diagnose', 'webcore_list_devices', 'webcore_get_device',
+    'webcore_list_pistons', 'webcore_select_piston', 'webcore_get_piston',
+    'webcore_lookup_language', 'webcore_prepare_piston_update',
+    'webcore_verify_piston_update', 'webcore_get_activity'
+  ];
+  for (const name of readOnlyNames) {
+    const item = response.result.tools.find(candidate => candidate.name === name);
+    assert.equal(item.annotations?.readOnlyHint, true, name);
+    assert.equal(item.annotations?.destructiveHint, false, name);
+    assert.equal(item.annotations?.openWorldHint, false, name);
+  }
+  for (const name of ['webcore_create_piston', 'webcore_pause_piston', 'webcore_resume_piston']) {
+    const item = response.result.tools.find(candidate => candidate.name === name);
+    assert.equal(item.annotations?.readOnlyHint, false, name);
+    assert.equal(item.annotations?.destructiveHint, false, name);
+    assert.equal(item.annotations?.openWorldHint, false, name);
+  }
+  for (const name of ['webcore_apply_piston_update', 'webcore_test_piston']) {
+    const item = response.result.tools.find(candidate => candidate.name === name);
+    assert.equal(item.annotations?.readOnlyHint, false, name);
+    assert.equal(item.annotations?.destructiveHint, true, name);
+    assert.equal(item.annotations?.openWorldHint, false, name);
+  }
 });
