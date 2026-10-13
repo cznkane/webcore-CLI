@@ -44,7 +44,7 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Install-VmManagement.ps1'),[ref]$tokens,[ref]$parserErrors)|Out-Null
  Assert ($parserErrors.Count-eq 0) 'PowerShell installer syntax'
  & "$PSScriptRoot\Package-VmManagement.ps1" -Commit ('a'*40)
- $package=Join-Path $source 'build\package'
+ $package=Join-Path $fixture 'package';Copy-Item -LiteralPath (Join-Path $source 'build\package') -Destination $package -Recurse
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node -TunnelConfigPath $yaml
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node -TunnelConfigPath $yaml
  Start-Sleep -Seconds 3
@@ -129,9 +129,9 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  $rejected=$false;try{$unavailable=Invoke-Operator $scope;$rejected=$unavailable.ok-eq $false}catch{$rejected=$true}finally{Set-Acl $auditPath $originalAcl}
  Assert $rejected 'audit write failure prevents request execution'
  Assert ((Get-Content "$root\state.json" -Raw)-eq $beforeAuditFailure) 'audit outage leaves release state unchanged'
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover -PackageRoot $package
  Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall -PackageRoot $package
  Assert (-not(Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Management' -ErrorAction SilentlyContinue)) 'uninstall removed only management tasks'
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'uninstall preserves original runtime'
  Write-Output 'WINDOWS INTEGRATION PASS'

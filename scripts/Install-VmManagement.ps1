@@ -18,7 +18,6 @@ $ApprovalShortcut=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Sm
 $BrokerTask='SmartHome-WebCoRE-Management'
 $WorkerTask='SmartHome-WebCoRE-Worker'
 $FirewallName='SmartHome-WebCoRE-Worker-NetworkDeny'
-. (Join-Path $PSScriptRoot 'VmWorkerRights.ps1')
 function Write-Json($Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 12),$Utf8)}
 function Hash($Path){(Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()}
 function Text-Hash([string]$Text){$sha=[Security.Cryptography.SHA256]::Create();try{[BitConverter]::ToString($sha.ComputeHash($Utf8.GetBytes($Text))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}}
@@ -41,6 +40,16 @@ function Assert-Protected([string]$Path,[string]$ReaderSid){
  if($owner -notin @('S-1-5-18','S-1-5-32-544')){throw 'Untrusted file owner'}
  $write=[Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
  foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw 'Unprotected management input'}}}
+}
+function Assert-ImmutableParents([string]$Path){
+ $cursor=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
+ $installerSid=([Security.Principal.NTAccount]::new('NT SERVICE','TrustedInstaller')).Translate([Security.Principal.SecurityIdentifier]).Value
+ $trusted=@('S-1-5-18','S-1-5-32-544',$installerSid)
+ $danger=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
+ while($cursor){$acl=Get-Acl -LiteralPath $cursor;$owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;if($owner -notin $trusted){throw 'Untrusted ancestor ownership'}
+  foreach($ace in $acl.Access){if(($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)-ne 0){continue};$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and ($ace.FileSystemRights -band $danger)-ne 0){throw 'Mutable ancestor permits protected-source replacement'}}
+  $cursor=[IO.Path]::GetDirectoryName($cursor)
+ }
 }
 function Export-Task([string]$Name){$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();[string]$scheduler.GetFolder('\').GetTask($Name).Xml}
 function Snapshot([string]$Source,[string]$Commit,[switch]$IsSnapshot){
@@ -81,6 +90,24 @@ function Existing-Verify{
 }
 if($env:OS -ne 'Windows_NT' -or -not [Environment]::Is64BitProcess){throw 'Use 64-bit administrator Windows PowerShell on TERMINAL'}
 if($Root -ne 'C:\ProgramData\SmartHome\VmManagement'){throw 'Fixed production root required'}
+$manifestPath=Join-Path $PackageRoot 'vm-package-manifest.json'
+if(-not(Test-Path -LiteralPath $manifestPath)){throw 'Pinned production package manifest missing; build CI artifact first'}
+Assert-Protected $PackageRoot
+Assert-ImmutableParents $PackageRoot
+Assert-ImmutableParents $Root
+Assert-Protected $manifestPath
+$manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+if($manifest.Commit -notmatch '\A[a-f0-9]{40}\z'){throw 'Invalid pinned package commit'}
+foreach($entry in $manifest.Files.PSObject.Properties){
+ if($entry.Name -match '(^|[\\/])\.\.?([\\/]|$)|:' -or [IO.Path]::IsPathRooted($entry.Name)){throw 'Unsafe package path'}
+ $path=Join-Path $PackageRoot $entry.Name;Assert-Protected $path
+ if((Hash $path)-ne $entry.Value){throw 'Package integrity mismatch'}
+}
+$rightsPath=Join-Path $PackageRoot 'scripts\VmWorkerRights.ps1'
+$rightsBytes=[IO.File]::ReadAllBytes($rightsPath);$sha=[Security.Cryptography.SHA256]::Create()
+try{$rightsDigest=[BitConverter]::ToString($sha.ComputeHash($rightsBytes)).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}
+if($rightsDigest -ne $manifest.Files.'scripts/VmWorkerRights.ps1'){throw 'Worker-rights helper integrity mismatch'}
+. ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($rightsBytes)))
 if($Mode -in @('Verify','Recover','Uninstall')){
  if($Mode -eq 'Verify'){Existing-Verify;exit 0}
  $cfg=Get-Content -LiteralPath (Join-Path $Root 'config.json') -Raw|ConvertFrom-Json
@@ -120,15 +147,6 @@ if(Test-Path -LiteralPath (Join-Path $Root 'config.json')){
  if($Mode -eq 'Install'){Write-Output 'Already installed: no task, credential, account or ACL was overwritten.'}
  exit 0
 }
-$manifestPath=Join-Path $PackageRoot 'vm-package-manifest.json'
-if(-not(Test-Path -LiteralPath $manifestPath)){throw 'Pinned production package manifest missing; build CI artifact first'}
-$manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
-if($manifest.Commit -notmatch '\A[a-f0-9]{40}\z'){throw 'Invalid pinned package commit'}
-foreach($entry in $manifest.Files.PSObject.Properties){
- if($entry.Name -match '(^|[\\/])\.\.?([\\/]|$)|:' -or [IO.Path]::IsPathRooted($entry.Name)){throw 'Unsafe package path'}
- $path=Join-Path $PackageRoot $entry.Name;Assert-NoReparse $path
- if((Hash $path)-ne $entry.Value){throw 'Package integrity mismatch'}
-}
 $mcp=Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP' -TaskPath '\'
 $watchdog=Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog' -TaskPath '\'
 if($mcp.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')){throw 'Unexpected existing service identity; installer never elevates it'}
@@ -160,7 +178,7 @@ Write-Output 'PREFLIGHT PASS: pinned package verified; existing SYSTEM identity 
 if($Mode -eq 'Preflight'){exit 0}
 if($Activate){throw 'Initial activation is a separate approved release cutover through the broker; Install never restarts production'}
 # Installation provisions only the boundary. Existing tunnel, watchdog and credentials stay byte-identical.
-$created=$false
+$created=$false;$createdRoot=$false;$cfg=$null
 try{
  $random=New-Object byte[] 48;$rng=[Security.Cryptography.RandomNumberGenerator]::Create();$rng.GetBytes($random);$rng.Dispose()
  $password=[Convert]::ToBase64String($random)+'aA1!'
@@ -169,7 +187,7 @@ try{
  $created=$true;$script:WorkerSid=(Get-LocalUser -Name $WorkerName).SID.Value
  [SmartHomeWorkerRights]::Apply($WorkerSid,$false)
  if((Get-LocalGroupMember -SID 'S-1-5-32-545').SID.Value -notcontains $WorkerSid){Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $WorkerName}
- New-Item -ItemType Directory -Path $Root|Out-Null;Protect $Root $WorkerSid
+ New-Item -ItemType Directory -Path $Root|Out-Null;$createdRoot=$true;Protect $Root $WorkerSid
  foreach($directory in @('bin','catalog','releases','audit','recovery','downloads','scratch')){New-Item -ItemType Directory -Path (Join-Path $Root $directory)|Out-Null}
  Protect (Join-Path $Root 'scratch') $WorkerSid -Writable
  Protect (Join-Path $Root 'audit') $null
@@ -210,5 +228,6 @@ try{
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
  if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
  if($created){try{[SmartHomeWorkerRights]::Apply($WorkerSid,$true)}catch{};Remove-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue}
+ if($createdRoot -and $null -ne $cfg -and (Test-Path -LiteralPath $Root) -and (Hash $TunnelConfigPath) -eq $cfg.InitialConfigSha256 -and @(Get-ChildItem -LiteralPath (Join-Path $Root 'audit') -File -ErrorAction SilentlyContinue).Count -eq 0){try{Get-ChildItem -LiteralPath $Root -Recurse -Force|ForEach-Object{Assert-NoReparse $_.FullName};Remove-Item -LiteralPath $Root -Recurse -Force}catch{Write-Warning 'Protected partial-install inventory retained for review'}}
  throw
 }

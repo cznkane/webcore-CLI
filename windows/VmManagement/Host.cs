@@ -31,7 +31,7 @@ public static class Host {
  static void Load() {
   var path=Path.GetFullPath(configPath);Guard.NoReparse(path);c=Guard.Read<Config>(path);
   ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
-  Guard.Full(c.Root);Guard.Require(Path.GetFullPath(exe)==Path.Combine(c.Root,"bin","VmManagement.exe"),"installation_path");
+  Guard.Full(c.Root);Guard.Require(String.Equals(Path.GetFullPath(exe),Path.Combine(c.Root,"bin","VmManagement.exe"),StringComparison.OrdinalIgnoreCase),"installation_path");
   Guard.Protected(path,c.WorkerSid);Guard.Protected(exe,c.WorkerSid);
   Guard.Require(Guard.Hash(exe)==c.ExeSha256,"host_integrity");
   Guard.Require(c.OperatorSid!="S-1-5-18"&&c.OperatorSid!=c.WorkerSid&&c.WorkerSid!="S-1-5-18","identity_separation");
@@ -55,7 +55,7 @@ public static class Host {
      Serve(BrokerPipe,"S-1-5-18",false,false);
     } return 0;
    }
-   if(args[0]=="worker") { Guard.Require(WindowsIdentity.GetCurrent().User.Value==c.WorkerSid&&!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator),"restricted_worker_required");Serve(WorkerPipe,"S-1-5-18",false,true);return 0; }
+   if(args[0]=="worker") { Guard.Require(WindowsIdentity.GetCurrent().User.Value==c.WorkerSid&&!WindowsIdentity.GetCurrent().Groups.Any(group=>group.Value=="S-1-5-32-544"),"restricted_worker_required");Serve(WorkerPipe,"S-1-5-18",false,true);return 0; }
    throw new InvalidOperationException("unknown_mode");
   } catch(Exception failure) { var code=Regex.IsMatch(failure.Message,@"\A[a-z_]{1,64}\z")?failure.Message:"boundary_failure";Console.Error.WriteLine("VM management failed closed: "+code);if(args.Length==1&&args[0]=="worker"&&c!=null){try{Guard.Write(Path.Combine(c.Root,"scratch","worker-startup-error.json"),new{error=code});}catch{}}return 2; }
  }
