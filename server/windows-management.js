@@ -26,3 +26,12 @@ export async function runManagementReadOnly(name, { env = process.env, os = plat
   try { return { operation: name, read_only: true, result: JSON.parse(output) }; }
   catch { throw new Error('Windows diagnostic returned invalid structured output.'); }
 }
+
+// Test execution is intentionally NOT available in the privileged MCP service.
+// Running repository-controlled npm scripts as SYSTEM would cross the trust boundary.
+// A separate least-privilege worker with immutable release verification is required.
+export const managementTestToolNames = Object.freeze([]);
+export function managementTestsAvailable() { return false; }
+export async function runManagementTest() {
+  throw new Error('VM test execution unavailable: isolated, verified worker not commissioned.');
+}

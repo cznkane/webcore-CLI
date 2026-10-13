@@ -1,0 +1,55 @@
+name: Windows VM management validation
+
+on:
+  push:
+    branches:
+      - feature/allowlisted-vm-tests
+  pull_request:
+    paths:
+      - 'server/vm-*.js'
+      - 'windows/**'
+      - 'scripts/*VmManagement.ps1'
+      - 'test/vm-*.test.js'
+      - '.github/workflows/windows-vm-worker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-worker:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate fixed MCP management contract
+        run: node --test test/vm-management-client.test.js
+      - name: Syntax check all server modules
+        run: npm run check
+      - name: Compile native security boundary
+        shell: powershell
+        run: ./scripts/Build-VmManagement.ps1
+      - name: Native pipe and identity checks
+        shell: powershell
+        run: |
+          $env:SMART_HOME_TEST_NODE = (Get-Command node.exe).Source
+          & ./build/vm-management/VmManagement.exe selftest
+          if ($LASTEXITCODE -ne 0) { throw 'Native security checks failed' }
+      - name: Real restricted identity and installation integration
+        shell: powershell
+        run: ./scripts/Test-VmManagementIntegration.ps1
+      - name: Full suite on Windows
+        run: npm test
+      - name: Build pinned installation artifact
+        shell: powershell
+        run: ./scripts/Package-VmManagement.ps1 -Commit '${{ github.event.pull_request.head.sha || github.sha }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}.zip
+            build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}.zip.sha256
+          if-no-files-found: error

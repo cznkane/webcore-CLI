@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { runManagementReadOnly, managementToolNames } from './windows-management.js';
+import { callVmManagement, vmManagementInstalled, vmManagementTools } from './vm-management-client.js';
 import { createInterface } from 'node:readline';
 import { loadConfig } from './config.js';
 import { WebcoreClient } from './client.js';
@@ -16,6 +17,7 @@ let currentClient;
 let currentConfigHash;
 
 const tools = [
+  ...(vmManagementInstalled() ? vmManagementTools : []),
   ...managementToolNames.map(name => ({ name, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Opt-in Windows VM read-only diagnostic; fixed allowlisted script, structured bounded output, no arbitrary command execution.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } })),
   { name: 'hubitat_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices explicitly authorized to the configured Hubitat Maker API instance. Read-only; does not execute device commands.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
 
@@ -40,6 +42,9 @@ const tools = [
 ];
 
 async function invoke(name, a) {
+  if (name === 'vm_management_health') return callVmManagement({ action: 'health' });
+  if (name === 'vm_management_status') return callVmManagement({ action: 'status', ...a });
+  if (name === 'vm_management_request') return callVmManagement({ action: 'request', ...a });
   if (managementToolNames.includes(name)) return runManagementReadOnly(name);
   const config = await loadConfig();
   if (!config) throw new Error('Not configured. First ask whether webCoRE runs on Hubitat and where the local hub is. Find the local execute endpoint at Hubitat > Apps > webCoRE > choose any piston > Test run piston. Prefer local access; only offer the Hubitat Cloud URL as a fallback after explaining it is not local and getting explicit confirmation. Then run `node server/cli.js setup` from the plugin folder.');
@@ -106,7 +111,7 @@ rl.on('line', async line => {
     if (req.method === 'notifications/initialized' || req.method?.startsWith('notifications/')) return;
     if (req.method === 'initialize') return send({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: req.params?.protocolVersion ?? '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'webcore-cli', version: packageInfo.version } } });
     if (req.method === 'ping') return send({ jsonrpc: '2.0', id: req.id, result: {} });
-    if (req.method === 'tools/list') return send({ jsonrpc: '2.0', id: req.id, result: { tools } });
+    if (req.method === 'tools/list') return send({ jsonrpc: '2.0', id: req.id, result: { tools: vmManagementInstalled() ? tools : tools.filter(tool => !tool.name.startsWith('vm_management_')) } });
     if (req.method === 'tools/call') {
       const name = req.params?.name;
       const schema = tools.find(t => t.name === name)?.inputSchema;
