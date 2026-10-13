@@ -5,17 +5,19 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Management;
 using System.Net.Http;
 using System.Reflection;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 namespace SmartHome.VmManagement {
 public sealed class Config {
- public string Root, WorkerSid, OperatorSid, ExeSha256, NodePath, NodeSha256, WorkerNodePath, WorkerNodeSha256, TunnelConfig, TunnelExe, McpTaskXmlSha256, WatchdogTaskXmlSha256, InitialCommand, InitialConfigSha256, CandidateCommit, CandidateSha256;
+ public string Root, WorkerSid, OperatorSid, ExeSha256, NodePath, NodeSha256, WorkerNodePath, WorkerNodeSha256, TunnelConfig, TunnelExe, TunnelExeSha256, McpTaskXmlSha256, WatchdogTaskXmlSha256, InitialCommand, InitialConfigSha256, CandidateCommit, CandidateSha256;
 }
 public sealed class Release { public string Commit, Sha256, Root; public Dictionary<string,string> Files; }
 public sealed class State { public Release Current, Previous;public string ConfigSha256, CommandRoot;public string Recovery="clean"; }
@@ -65,7 +67,7 @@ public static class Host {
      string actual=Pipe.Peer(pipe,exe,c.ExeSha256);Guard.Require(actual==sid,"peer_sid");
      var result=worker?Work(message):op?OperatorRequest(message):BrokerRequest(message);
      Pipe.Send(pipe,result);
-    } catch { if(!worker) {try {Guard.Audit(c.Root,Guard.Id(),"ipc_request","denied",new string('0',64));}catch {throw;} } try { Pipe.Send(pipe,new { ok=false,error="request_rejected" }); } catch {} }
+    } catch(Exception failure) { if(!worker) {try {Guard.Audit(c.Root,Guard.Id(),"ipc_request","denied",new string('0',64));}catch {throw;} } try { Pipe.Send(pipe,new { ok=false,error="request_rejected",reason=Regex.IsMatch(failure.Message,@"\A[a-z_]{1,64}\z")?failure.Message:"boundary_failure" }); } catch {} }
    }
    // Partial-frame timeout closes the listener; scheduled-task restart recreates it.
    if(pipe.IsConnected) pipe.Disconnect();
@@ -183,6 +185,7 @@ public static class Host {
   if(r.Operation=="deploy_release") RequireMerged(r.Commit);
   var s=GetState();Guard.Require(s.Recovery=="clean"&&s.Current.Sha256==r.ExpectedCurrentSha256,"stale_cutover");var target=Find(r.Commit,r.Sha256);
   var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)tests["ok"],"cutover_tests_failed");
+  Guard.Protected(c.TunnelExe);Guard.Require(Guard.Hash(c.TunnelExe)==c.TunnelExeSha256,"tunnel_integrity");
   Guard.Protected(c.TunnelConfig);Guard.Protected(c.NodePath);Guard.Require(Guard.Hash(c.NodePath)==c.NodeSha256&&Guard.Hash(c.TunnelConfig)==s.ConfigSha256,"configuration_drift");
   dynamic scheduler=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));scheduler.Connect();dynamic folder=scheduler.GetFolder("\\");dynamic task=folder.GetTask("SmartHome-WebCoRE-MCP");dynamic watchdog=folder.GetTask("SmartHome-WebCoRE-Watchdog");
   Guard.Require(Guard.Digest((string)task.Xml)==c.McpTaskXmlSha256&&Guard.Digest((string)watchdog.Xml)==c.WatchdogTaskXmlSha256,"task_drift");
@@ -195,7 +198,7 @@ public static class Host {
   s.Recovery="cutover_in_progress";Save(s); // durable marker before first production mutation
   try {
    watchdog.Enabled=false;task.Stop(0);WaitTunnel(false);
-   AtomicText(c.TunnelConfig,old.Replace(fromEncoded,toEncoded));task.Run(null);WaitTunnel(true);
+   AtomicText(c.TunnelConfig,old.Replace(fromEncoded,toEncoded));task.Run(null);WaitTunnel(true);VerifyRunningNode(target);
    // Process presence is a local gate; fresh ChatGPT end-to-end acceptance is separate.
    var previous=s.Current;var updated=new State{Current=target,Previous=r.Operation=="restart_mcp"?s.Previous:previous,CommandRoot=target.Root,ConfigSha256=Guard.Hash(c.TunnelConfig),Recovery="clean"};Save(updated);
    return new { ok=true,currentCommit=target.Commit,localProcessVerified=true,endToEndVerified=false,rollbackCommit=r.Operation=="restart_mcp"?(s.Previous==null?null:s.Previous.Commit):s.Current.Commit };
@@ -204,6 +207,19 @@ public static class Host {
    catch { s.Recovery="operator_recovery_required";Save(s); }
    throw;
   } finally { watchdog.Enabled=enabled; }
+ }
+ static void VerifyRunningNode(Release target) {
+  var script=target.Root+"\\server\\index.js";
+  for(int i=0;i<30;i++) {
+   var tunnels=Process.GetProcessesByName("tunnel-client").Where(p=>String.Equals(p.MainModule.FileName,c.TunnelExe,StringComparison.OrdinalIgnoreCase)).Select(p=>p.Id).ToArray();Guard.Require(tunnels.Length==1,"tunnel_identity");
+   using(var search=new ManagementObjectSearcher("SELECT ExecutablePath,CommandLine,ParentProcessId FROM Win32_Process WHERE Name='node.exe'")) {
+    int matched=0;foreach(ManagementObject process in search.Get()) {
+     var command=process["CommandLine"] as string;var image=process["ExecutablePath"] as string;
+     if(Convert.ToInt32(process["ParentProcessId"])==tunnels[0]&&String.Equals(image,c.NodePath,StringComparison.OrdinalIgnoreCase)&&command!=null&&(command.EndsWith(" "+script,StringComparison.OrdinalIgnoreCase)||command.EndsWith("\""+script+"\"",StringComparison.OrdinalIgnoreCase)))matched++;
+    }
+    if(matched==1) return;Guard.Require(matched<=1,"duplicate_mcp");
+   }Thread.Sleep(1000);
+  }throw new InvalidOperationException("running_payload_unverified");
  }
  static void AtomicText(string path,string text) { var temp=path+".vm-management.tmp";using(var f=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {var b=new UTF8Encoding(false).GetBytes(text);f.Write(b,0,b.Length);f.Flush(true);} File.Replace(temp,path,null); }
  static void WaitTunnel(bool running) {

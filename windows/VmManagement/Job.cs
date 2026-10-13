@@ -16,6 +16,8 @@ public static class Job {
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
  [DllImport("kernel32.dll",SetLastError=true)] static extern uint ResumeThread(IntPtr thread);
  [DllImport("kernel32.dll",SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint ms);
+ [StructLayout(LayoutKind.Sequential)] struct ACCOUNT {public long user,kernel,periodUser,periodKernel;public uint faults,total,active,terminated;}
+ [DllImport("kernel32.dll",SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int cls,out ACCOUNT info,uint size,IntPtr returned);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr handle,out uint exit);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint exit);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool TerminateProcess(IntPtr process,uint exit);
@@ -39,6 +41,7 @@ public static class Job {
    uint code; Guard.Require(GetExitCodeProcess(p.process,out code),"exit_code");
    Guard.Require(TerminateJobObject(job,timed?124u:0u),"job_terminate");
    Guard.Require(WaitForSingleObject(p.process,5000)==0,"process_termination");
+   ACCOUNT accounting;bool empty=false;for(int i=0;i<100;i++){Guard.Require(QueryInformationJobObject(job,1,out accounting,(uint)Marshal.SizeOf(typeof(ACCOUNT)),IntPtr.Zero),"job_accounting");if(accounting.active==0){empty=true;break;}System.Threading.Thread.Sleep(50);}Guard.Require(empty,"descendant_termination");
    return new { ok=!timed&&code==0,exitCode=timed?124:code,durationMs=watch.ElapsedMilliseconds,timedOut=timed,outputSuppressed=true };
   } finally {
    if(p.process!=IntPtr.Zero) { TerminateProcess(p.process,125);CloseHandle(p.process); }

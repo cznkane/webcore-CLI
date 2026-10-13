@@ -2,6 +2,7 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][ValidatePattern('\A[a-f0-9]{40}\z')][string]$Commit,[string]$OutputDirectory=(Join-Path $PSScriptRoot '..\build\package'))
 $ErrorActionPreference='Stop'
+$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 $source=Split-Path $PSScriptRoot -Parent
 if(Test-Path -LiteralPath $OutputDirectory){Remove-Item -LiteralPath $OutputDirectory -Recurse -Force}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null

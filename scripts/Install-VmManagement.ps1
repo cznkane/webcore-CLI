@@ -10,6 +10,7 @@ param(
  [switch]$Activate
 )
 $ErrorActionPreference='Stop'
+$PackageRoot=[IO.Path]::GetFullPath($PackageRoot)
 Set-StrictMode -Version Latest
 $Utf8=[Text.UTF8Encoding]::new($false)
 $WorkerName='SmartHomeVmWorker'
@@ -137,14 +138,14 @@ $yaml=[IO.File]::ReadAllText($TunnelConfigPath).Replace('\\','\')
 $paths=@([regex]::Matches($yaml,'[A-Za-z]:\\[^"\r\n]*?\\server\\index\.js')|ForEach-Object Value|Select-Object -Unique)
 if($paths.Count -ne 1){throw 'Unique current MCP payload path not established'}
 $originalRoot=Split-Path (Split-Path $paths[0] -Parent) -Parent
-Assert-NoReparse $originalRoot
+Assert-Protected $originalRoot
 if(-not(Test-Path -LiteralPath (Join-Path $originalRoot 'package.json'))){throw 'Current runtime package missing'}
 Assert-Protected $NodePath
 $version=& $NodePath --version
 if($LASTEXITCODE -ne 0 -or $version -notmatch '^v24\.'){throw 'Pinned Node.js 24 required'}
 $tunnelExe=[string]$mcp.Actions[0].Execute
 if([IO.Path]::GetFileName($tunnelExe)-ne 'tunnel-client.exe'){throw 'Unexpected MCP launcher; review task action before installing'}
-Assert-NoReparse $tunnelExe
+Assert-Protected $tunnelExe
 if(@(Get-NetFirewallProfile|Where-Object Enabled -ne $true).Count){throw 'Firewall must be enabled on all profiles'}
 if(Get-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue){throw 'Worker account already exists without a verified installation'}
 if(Test-Path -LiteralPath $Root){throw 'Partial installation exists; inspect/recover before retry, never overwrite'}
@@ -174,7 +175,7 @@ try{
  Copy-Item -LiteralPath $TunnelConfigPath -Destination (Join-Path $Root 'recovery\original-tunnel.yaml')
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-mcp-task.xml'),$mcpXml,$Utf8)
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-watchdog-task.xml'),$watchdogXml,$Utf8)
- $cfg=@{Root=$Root;WorkerSid=$WorkerSid;OperatorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;ExeSha256=Hash (Join-Path $Root 'bin\VmManagement.exe');NodePath=$NodePath;NodeSha256=Hash $NodePath;WorkerNodePath=Join-Path $Root 'bin\node.exe';WorkerNodeSha256=Hash (Join-Path $Root 'bin\node.exe');TunnelConfig=$TunnelConfigPath;TunnelExe=$tunnelExe;McpTaskXmlSha256=Text-Hash $mcpXml;WatchdogTaskXmlSha256=Text-Hash $watchdogXml;InitialCommand=$paths[0];InitialConfigSha256=Hash $TunnelConfigPath;CandidateCommit=$candidate.Commit;CandidateSha256=$candidate.Sha256}
+ $cfg=@{Root=$Root;WorkerSid=$WorkerSid;OperatorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;ExeSha256=Hash (Join-Path $Root 'bin\VmManagement.exe');NodePath=$NodePath;NodeSha256=Hash $NodePath;WorkerNodePath=Join-Path $Root 'bin\node.exe';WorkerNodeSha256=Hash (Join-Path $Root 'bin\node.exe');TunnelConfig=$TunnelConfigPath;TunnelExe=$tunnelExe;TunnelExeSha256=Hash $tunnelExe;McpTaskXmlSha256=Text-Hash $mcpXml;WatchdogTaskXmlSha256=Text-Hash $watchdogXml;InitialCommand=$paths[0];InitialConfigSha256=Hash $TunnelConfigPath;CandidateCommit=$candidate.Commit;CandidateSha256=$candidate.Sha256}
  Write-Json (Join-Path $Root 'config.json') $cfg
  Write-Json (Join-Path $Root 'state.json') @{Current=$baseline;Previous=$null;CommandRoot=$originalRoot;ConfigSha256=Hash $TunnelConfigPath;Recovery='clean'}
  New-NetFirewallRule -Name $FirewallName -DisplayName 'SmartHome restricted worker outbound deny' -Direction Outbound -Action Block -Profile Any -LocalUser "D:(A;;CC;;;$WorkerSid)" | Out-Null
