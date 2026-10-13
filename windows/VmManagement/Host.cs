@@ -30,6 +30,7 @@ public static class Host {
  const string BrokerPipe="SmartHome-WebCoRE-Management",OperatorPipe="SmartHome-WebCoRE-Approval",WorkerPipe="SmartHome-WebCoRE-Worker";
  static void Load() {
   var path=Path.GetFullPath(configPath);Guard.NoReparse(path);c=Guard.Read<Config>(path);
+  ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
   Guard.Full(c.Root);Guard.Require(Path.GetFullPath(exe)==Path.Combine(c.Root,"bin","VmManagement.exe"),"installation_path");
   Guard.Protected(path,c.WorkerSid);Guard.Protected(exe,c.WorkerSid);
   Guard.Require(Guard.Hash(exe)==c.ExeSha256,"host_integrity");
@@ -45,6 +46,7 @@ public static class Host {
    if(args[0]=="operator") { Operator();return 0; }
    if(args[0]=="probe") { Console.WriteLine(Guard.Json.Serialize(Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="list" })));return 0; }
    if(args[0]=="broker") {
+    Pipe.AllowIdentityQuery(c.WorkerSid);
     Guard.Require(WindowsIdentity.GetCurrent().User.Value=="S-1-5-18","system_broker_required");
     using(var mutex=new Mutex(false,@"Global\SmartHome-WebCoRE-Management")) {
      Guard.Require(mutex.WaitOne(0),"duplicate_broker");

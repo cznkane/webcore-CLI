@@ -66,6 +66,7 @@ function Existing-Verify{
  if((Hash (Join-Path $Root 'bin\VmManagement.exe'))-ne $cfg.ExeSha256){throw 'Host integrity mismatch'}
  if((Hash $cfg.NodePath)-ne $cfg.NodeSha256 -or (Hash $cfg.WorkerNodePath)-ne $cfg.WorkerNodeSha256){throw 'Node integrity mismatch'}
  $task=Get-ScheduledTask -TaskName $WorkerTask
+ if($task.State -ne 'Running' -or (Get-ScheduledTask -TaskName $BrokerTask).State -ne 'Running'){throw 'Management tasks are not running'}
  if($task.Principal.UserId -notin @($cfg.WorkerSid,"$env:COMPUTERNAME\$WorkerName",$WorkerName)-or $task.Principal.RunLevel -ne 'Limited'){throw 'Worker identity/privilege mismatch'}
  if((Get-LocalGroupMember -SID 'S-1-5-32-544').SID.Value -contains $cfg.WorkerSid){throw 'Worker is administrator'}
  if((Text-Hash (Export-Task 'SmartHome-WebCoRE-MCP'))-ne $cfg.McpTaskXmlSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-Watchdog'))-ne $cfg.WatchdogTaskXmlSha256){throw 'Existing task drift'}

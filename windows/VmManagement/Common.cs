@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
 using System.Linq;
@@ -58,6 +59,21 @@ public static class Pipe {
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern SafePipeHandle CreateNamedPipe(string n,uint open,uint mode,uint instances,uint output,uint input,uint timeout,ref SA sa);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle h,out uint pid);
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeServerProcessId(SafePipeHandle h,out uint pid);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern uint GetSecurityInfo(IntPtr handle,int kind,uint info,out IntPtr owner,out IntPtr group,out IntPtr dacl,out IntPtr sacl,out IntPtr descriptor);
+ [DllImport("advapi32.dll",SetLastError=true)] static extern uint SetSecurityInfo(IntPtr handle,int kind,uint info,IntPtr owner,IntPtr group,IntPtr dacl,IntPtr sacl);
+ [DllImport("advapi32.dll")] static extern uint GetSecurityDescriptorLength(IntPtr descriptor);
+ public static void AllowIdentityQuery(string workerSid) {
+  using(var process=Process.GetCurrentProcess()) {
+   IntPtr owner,group,dacl,sacl,descriptor;Guard.Require(GetSecurityInfo(process.Handle,6,4,out owner,out group,out dacl,out sacl,out descriptor)==0,"process_dacl_read");
+   try {
+    var bytes=new byte[GetSecurityDescriptorLength(descriptor)];Marshal.Copy(descriptor,bytes,0,bytes.Length);var security=new RawSecurityDescriptor(bytes,0);Guard.Require(security.DiscretionaryAcl!=null,"process_dacl_missing");
+    // Only query-image access, never VM_READ/WRITE, token access, thread creation or debug privilege.
+    var acl=security.DiscretionaryAcl;acl.InsertAce(acl.Count,new CommonAce(AceFlags.None,AceQualifier.AccessAllowed,0x1000,new SecurityIdentifier(workerSid),false,null));
+    var binary=new byte[acl.BinaryLength];acl.GetBinaryForm(binary,0);var pointer=Marshal.AllocHGlobal(binary.Length);
+    try{Marshal.Copy(binary,0,pointer,binary.Length);Guard.Require(SetSecurityInfo(process.Handle,6,4,IntPtr.Zero,IntPtr.Zero,pointer,IntPtr.Zero)==0,"process_dacl_write");}finally{Marshal.FreeHGlobal(pointer);}
+   }finally{LocalFree(descriptor);}
+  }
+ }
  [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr h,int flags,StringBuilder path,ref int size);
  [DllImport("advapi32.dll",SetLastError=true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
