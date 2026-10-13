@@ -4,7 +4,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 // IPC listener, network endpoint, or service integration is enabled here.
 const OPERATIONS = Object.freeze({
   run_webcore_tests: Object.freeze({ executable: 'node.exe', args: Object.freeze(['--test']) }),
-  run_webcore_syntax_check: Object.freeze({ executable: 'npm.cmd', args: Object.freeze(['run', 'check']) })
+  run_webcore_syntax_check: Object.freeze({ executable: 'node.exe', args: Object.freeze(['--check', 'server/index.js']) })
 });
 const SHA256 = /^[a-f0-9]{64}$/;
 const APPROVAL_ID = /^[a-zA-Z0-9_-]{16,128}$/;
