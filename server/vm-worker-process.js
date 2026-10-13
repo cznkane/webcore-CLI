@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { win32 } from 'node:path';
 
 // Inert helper for a future restricted worker. Never invoke this from the
 // privileged MCP service. Windows Job Object enforcement and identity
