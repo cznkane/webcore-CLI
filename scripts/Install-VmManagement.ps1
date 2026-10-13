@@ -94,6 +94,7 @@ function Snapshot([string]$Source,[string]$Commit,[string]$EntryPoint,[switch]$I
 function Existing-Verify{
  Assert-Protected (Join-Path $Root 'config.json')
  $cfg=Get-Content -LiteralPath (Join-Path $Root 'config.json') -Raw|ConvertFrom-Json
+ if('SchemaVersion' -notin $cfg.PSObject.Properties.Name -or $cfg.SchemaVersion -ne 2){throw 'Existing installation requires reviewed schema migration; never overwrite it'}
  $state=Get-Content -LiteralPath (Join-Path $Root 'state.json') -Raw|ConvertFrom-Json
  Assert-Protected $Root $cfg.WorkerSid
  Assert-Protected (Join-Path $Root 'config.json') $cfg.WorkerSid
@@ -258,7 +259,7 @@ try{
  Copy-Item -LiteralPath $TunnelConfigPath -Destination (Join-Path $Root 'recovery\original-tunnel.yaml')
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-mcp-task.xml'),$mcpXml,$Utf8)
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-watchdog-task.xml'),$watchdogXml,$Utf8)
- $cfg=@{Root=$Root;WorkerSid=$WorkerSid;OperatorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;ExeSha256=Hash (Join-Path $Root 'bin\VmManagement.exe');NodePath=$NodePath;NodeSha256=Hash $NodePath;WorkerNodePath=Join-Path $Root 'bin\node.exe';WorkerNodeSha256=Hash (Join-Path $Root 'bin\node.exe');TunnelConfig=$TunnelConfigPath;TunnelExe=$tunnelExe;TunnelExeSha256=Hash $tunnelExe;McpTaskXmlSha256=Text-Hash $mcpXml;WatchdogTaskXmlSha256=Text-Hash $watchdogXml;InitialCommand=$commandPath;ReleaseEntryPoint=$entryPoint;InitialConfigSha256=Hash $TunnelConfigPath;CandidateCommit=$candidate.Commit;CandidateSha256=$candidate.Sha256}
+ $cfg=@{SchemaVersion=2;Root=$Root;WorkerSid=$WorkerSid;OperatorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;ExeSha256=Hash (Join-Path $Root 'bin\VmManagement.exe');NodePath=$NodePath;NodeSha256=Hash $NodePath;WorkerNodePath=Join-Path $Root 'bin\node.exe';WorkerNodeSha256=Hash (Join-Path $Root 'bin\node.exe');TunnelConfig=$TunnelConfigPath;TunnelExe=$tunnelExe;TunnelExeSha256=Hash $tunnelExe;McpTaskXmlSha256=Text-Hash $mcpXml;WatchdogTaskXmlSha256=Text-Hash $watchdogXml;InitialCommand=$commandPath;ReleaseEntryPoint=$entryPoint;InitialConfigSha256=Hash $TunnelConfigPath;CandidateCommit=$candidate.Commit;CandidateSha256=$candidate.Sha256}
  Write-Json (Join-Path $Root 'config.json') $cfg
  Write-Json (Join-Path $Root 'state.json') @{Current=$baseline;Previous=$null;CommandRoot=$originalRoot;CommandText=$commandText;CommandEncoding=$commandEncoding;ConfigSha256=Hash $TunnelConfigPath;Recovery='clean'}
  New-NetFirewallRule -Name $FirewallName -DisplayName 'SmartHome restricted worker outbound deny' -Direction Outbound -Action Block -Profile Any -LocalUser "D:(A;;CC;;;$WorkerSid)" | Out-Null

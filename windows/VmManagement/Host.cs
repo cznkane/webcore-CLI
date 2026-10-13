@@ -17,6 +17,7 @@ using System.Windows.Forms;
 
 namespace SmartHome.VmManagement {
 public sealed class Config {
+ public int SchemaVersion;
  public string Root, WorkerSid, OperatorSid, ExeSha256, NodePath, NodeSha256, WorkerNodePath, WorkerNodeSha256, TunnelConfig, TunnelExe, TunnelExeSha256, McpTaskXmlSha256, WatchdogTaskXmlSha256, InitialCommand, InitialConfigSha256, CandidateCommit, CandidateSha256, ReleaseEntryPoint;
 }
 public sealed class Release { public string Commit, Sha256, Root, Version, EntryPoint; public bool IsSnapshot; public Dictionary<string,string> Files; }
@@ -30,6 +31,7 @@ public static class Host {
  const string BrokerPipe="SmartHome-WebCoRE-Management",OperatorPipe="SmartHome-WebCoRE-Approval",WorkerPipe="SmartHome-WebCoRE-Worker";
  static void Load() {
   var path=Path.GetFullPath(configPath);Guard.NoReparse(path);c=Guard.Read<Config>(path);
+  Guard.Require(c.SchemaVersion==2,"unsupported_installation_schema");
   ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
   Guard.Full(c.Root);Guard.Require(String.Equals(Path.GetFullPath(exe),Path.Combine(c.Root,"bin","VmManagement.exe"),StringComparison.OrdinalIgnoreCase),"installation_path");
   Guard.Protected(path,c.WorkerSid);Guard.Protected(exe,c.WorkerSid);
