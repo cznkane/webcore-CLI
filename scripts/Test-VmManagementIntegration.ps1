@@ -59,6 +59,7 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $completed=Await-Request $request.requestId
  Write-Output ('Restricted worker result: '+($completed|ConvertTo-Json -Compress -Depth 8))
  if(Test-Path "$root\scratch\worker-startup-error.json"){Get-Content "$root\scratch\worker-startup-error.json"|Write-Output}
+ Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Worker'|Select-Object State,@{Name='LogonType';Expression={$_.Principal.LogonType}}|ConvertTo-Json -Compress|Write-Output
  Get-ScheduledTaskInfo -TaskName 'SmartHome-WebCoRE-Worker'|Select-Object LastTaskResult|ConvertTo-Json -Compress|Write-Output
  Assert ($completed.status-eq 'succeeded' -and $completed.result.exitCode-eq 0) 'real restricted-worker syntax execution'
  # Wrong executable cannot use the independent operator channel even with the correct SID.

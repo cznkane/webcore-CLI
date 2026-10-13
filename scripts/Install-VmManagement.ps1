@@ -17,6 +17,7 @@ $WorkerName='SmartHomeVmWorker'
 $BrokerTask='SmartHome-WebCoRE-Management'
 $WorkerTask='SmartHome-WebCoRE-Worker'
 $FirewallName='SmartHome-WebCoRE-Worker-NetworkDeny'
+. (Join-Path $PSScriptRoot 'VmWorkerRights.ps1')
 function Write-Json($Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 12),$Utf8)}
 function Hash($Path){(Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()}
 function Text-Hash([string]$Text){$sha=[Security.Cryptography.SHA256]::Create();try{[BitConverter]::ToString($sha.ComputeHash($Utf8.GetBytes($Text))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}}
@@ -105,6 +106,7 @@ if($Mode -in @('Verify','Recover','Uninstall')){
  if($text.Contains($Root)-or $text.Contains($Root.Replace('\','\\'))){throw 'Restore and verify original runtime with Recover before uninstall'}
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
+ [SmartHomeWorkerRights]::Apply($cfg.WorkerSid,$true)
  Remove-LocalUser -Name $WorkerName
  Write-Output 'Management tasks, firewall rule and worker account removed. Protected audit/recovery inventory retained; no live MCP/watchdog task removed.'
  exit 0
@@ -160,6 +162,7 @@ try{
  $secure=ConvertTo-SecureString $password -AsPlainText -Force
  New-LocalUser -Name $WorkerName -Password $secure -AccountNeverExpires -PasswordNeverExpires -Description 'Restricted SmartHome validation worker'|Out-Null
  $created=$true;$script:WorkerSid=(Get-LocalUser -Name $WorkerName).SID.Value
+ [SmartHomeWorkerRights]::Apply($WorkerSid,$false)
  if((Get-LocalGroupMember -SID 'S-1-5-32-545').SID.Value -notcontains $WorkerSid){Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $WorkerName}
  New-Item -ItemType Directory -Path $Root|Out-Null;Protect $Root $WorkerSid
  foreach($directory in @('bin','catalog','releases','audit','recovery','downloads','scratch')){New-Item -ItemType Directory -Path (Join-Path $Root $directory)|Out-Null}
@@ -182,12 +185,16 @@ try{
  $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable
  $trigger=New-ScheduledTaskTrigger -AtStartup
  $workerAction=New-ScheduledTaskAction -Execute (Join-Path $Root 'bin\VmManagement.exe') -Argument 'worker' -WorkingDirectory (Join-Path $Root 'bin')
- Register-ScheduledTask -TaskName $WorkerTask -Action $workerAction -Trigger $trigger -Settings $settings -User "$env:COMPUTERNAME\$WorkerName" -Password $password -RunLevel Limited | Out-Null
+ $workerPrincipal=New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$WorkerName" -LogonType Password -RunLevel Limited
+ $workerDefinition=New-ScheduledTask -Action $workerAction -Trigger $trigger -Settings $settings -Principal $workerPrincipal
+ Register-ScheduledTask -TaskName $WorkerTask -InputObject $workerDefinition -User "$env:COMPUTERNAME\$WorkerName" -Password $password | Out-Null
  $password=$null;$secure=$null;[Array]::Clear($random,0,$random.Length)
  $brokerAction=New-ScheduledTaskAction -Execute (Join-Path $Root 'bin\VmManagement.exe') -Argument 'broker' -WorkingDirectory (Join-Path $Root 'bin')
  $principal=New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
  Register-ScheduledTask -TaskName $BrokerTask -Action $brokerAction -Trigger $trigger -Settings $settings -Principal $principal|Out-Null
  Start-ScheduledTask -TaskName $WorkerTask;Start-ScheduledTask -TaskName $BrokerTask
+ for($attempt=0;$attempt -lt 15;$attempt++){if((Get-ScheduledTask -TaskName $WorkerTask).State -eq 'Running' -and (Get-ScheduledTask -TaskName $BrokerTask).State -eq 'Running'){break};Start-Sleep -Seconds 1}
+ if((Get-ScheduledTask -TaskName $WorkerTask).State -ne 'Running' -or (Get-ScheduledTask -TaskName $BrokerTask).State -ne 'Running'){throw 'New management tasks failed to start; no production cutover occurred'}
  if((Hash $TunnelConfigPath)-ne $cfg.InitialConfigSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-MCP'))-ne $cfg.McpTaskXmlSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-Watchdog'))-ne $cfg.WatchdogTaskXmlSha256){throw 'Existing runtime preservation check failed'}
  Existing-Verify
  Write-Output "INSTALL PASS: boundary provisioned; production not cut over. Candidate commit: $($candidate.Commit); manifest SHA-256: $($candidate.Sha256). Use independent operator approval for activation."
@@ -195,6 +202,6 @@ try{
  # Never scatter repairs across existing service/tunnel. Remove only new task/account/rule on failure.
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
- if($created){Remove-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue}
+ if($created){try{[SmartHomeWorkerRights]::Apply($WorkerSid,$true)}catch{};Remove-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue}
  throw
 }

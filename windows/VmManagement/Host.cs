@@ -110,7 +110,7 @@ public static class Host {
   var action=Guard.Text(m,"action");
   if(action=="request") return BrokerRequest(m);
   if(action=="bootstrap") { Guard.Keys(m,"action");var state=GetState();return BrokerRequest(Guard.Parse(Guard.Json.Serialize(new{action="request",operation="deploy_release",commit=c.CandidateCommit,sha256=c.CandidateSha256,expectedCurrentSha256=state.Current.Sha256}))); }
-  if(action=="list") { Guard.Keys(m,"action");lock(sync) return new { ok=true,requests=requests.Values.Select(View).ToArray() }; }
+  if(action=="list") { Guard.Keys(m,"action");lock(sync) return new { ok=true,requests=requests.Values.OrderByDescending(r=>r.Expires).Take(32).Select(View).ToArray() }; }
   Guard.Keys(m,"action","requestId");var id=Guard.Text(m,"requestId");Guard.Require(action=="approve"||action=="deny","unknown_operator_action");
   lock(sync) {
    Request r;Guard.Require(requests.TryGetValue(id,out r)&&r.Status=="pending"&&r.Expires>DateTime.UtcNow&&!busy,"approval_unavailable");
@@ -184,6 +184,7 @@ public static class Host {
  static object Cutover(Request r) {
   if(r.Operation=="deploy_release") RequireMerged(r.Commit);
   var s=GetState();Guard.Require(s.Recovery=="clean"&&s.Current.Sha256==r.ExpectedCurrentSha256,"stale_cutover");var target=Find(r.Commit,r.Sha256);
+  if(s.CommandRoot!=s.Current.Root) Verify(new Release{Commit=s.Current.Commit,Sha256=s.Current.Sha256,Root=s.CommandRoot,Files=s.Current.Files});
   var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)syntax["ok"],"cutover_syntax_failed");
   var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)tests["ok"],"cutover_tests_failed");
   Guard.Protected(c.TunnelExe);Guard.Require(Guard.Hash(c.TunnelExe)==c.TunnelExeSha256,"tunnel_integrity");
@@ -204,10 +205,10 @@ public static class Host {
    var previous=s.Current;var updated=new State{Current=target,Previous=r.Operation=="restart_mcp"?s.Previous:previous,CommandRoot=r.Operation=="restart_mcp"?s.CommandRoot:target.Root,ConfigSha256=Guard.Hash(c.TunnelConfig),Recovery="clean"};Save(updated);
    return new { ok=true,currentCommit=target.Commit,localProcessVerified=true,endToEndVerified=false,rollbackCommit=r.Operation=="restart_mcp"?(s.Previous==null?null:s.Previous.Commit):s.Current.Commit };
   } catch {
-   try { task.Stop(0);WaitTunnel(false);AtomicText(c.TunnelConfig,old);task.Run(null);WaitTunnel(true);s.Recovery="clean";s.ConfigSha256=Guard.Hash(c.TunnelConfig);Save(s); }
+   try { task.Stop(0);WaitTunnel(false);AtomicText(c.TunnelConfig,old);task.Run(null);WaitTunnel(true);VerifyRunningNode(s.CommandRoot);s.Recovery="clean";s.ConfigSha256=Guard.Hash(c.TunnelConfig);Save(s); }
    catch { s.Recovery="operator_recovery_required";Save(s); }
    throw;
-  } finally { watchdog.Enabled=enabled; }
+  } finally { try{watchdog.Enabled=enabled;}catch{var recovery=GetState();recovery.Recovery="operator_recovery_required";Save(recovery);throw;} }
  }
  static void VerifyRunningNode(string releaseRoot) {
   var script=releaseRoot+"\\server\\index.js";
