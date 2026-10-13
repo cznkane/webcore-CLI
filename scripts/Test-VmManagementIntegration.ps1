@@ -16,6 +16,7 @@ function Secure([string]$Path){
  foreach($sid in @('S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
  Set-Acl -LiteralPath $Path -AclObject $acl
 }
+function Read-FrameBytes($Stream,[int]$Length){$bytes=New-Object byte[] $Length;$offset=0;while($offset-lt $Length){$n=$Stream.Read($bytes,$offset,$Length-$offset);if($n-le 0){throw 'Frame EOF'};$offset+=$n};return ,$bytes}
 function Invoke-Operator($Value){$json=$Value|ConvertTo-Json -Compress -Depth 8;$result=$json|& (Join-Path $root 'bin\VmManagement.exe') operator-client;if($LASTEXITCODE-ne 0){throw 'Operator client failure'};return ($result|ConvertFrom-Json)}
 function Await-Request([string]$Id){for($i=0;$i-lt 150;$i++){Start-Sleep -Seconds 1;$all=Invoke-Operator @{action='list'};$r=@($all.requests|Where-Object requestId -eq $Id)[0];if($r.status -in @('succeeded','failed','denied')){return $r}};throw 'Request completion timeout'}
 try{
@@ -64,7 +65,7 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  Assert ($completed.status-eq 'succeeded' -and $completed.result.exitCode-eq 0) 'real restricted-worker syntax execution'
  # Wrong executable cannot use the independent operator channel even with the correct SID.
  $pipe=[IO.Pipes.NamedPipeClientStream]::new('.','SmartHome-WebCoRE-Approval',[IO.Pipes.PipeDirection]::InOut,[IO.Pipes.PipeOptions]::None,[Security.Principal.TokenImpersonationLevel]::Identification)
- $pipe.Connect(3000);$bytes=[Text.Encoding]::UTF8.GetBytes('{"action":"list"}');$header=[BitConverter]::GetBytes($bytes.Length);$pipe.Write($header,0,4);$pipe.Write($bytes,0,$bytes.Length);$pipe.Flush();$response=New-Object byte[] 65536;$received=$pipe.Read($response,0,$response.Length);$pipe.Dispose();Assert ($received-gt 0 -and [Text.Encoding]::UTF8.GetString($response,4,$received-4).Contains('request_rejected')) 'untrusted executable peer rejected'
+ $pipe.Connect(3000);$bytes=[Text.Encoding]::UTF8.GetBytes('{"action":"list"}');$header=[BitConverter]::GetBytes($bytes.Length);$pipe.Write($header,0,4);$pipe.Write($bytes,0,$bytes.Length);$pipe.Flush();$responseHeader=Read-FrameBytes $pipe 4;$responseLength=[BitConverter]::ToInt32($responseHeader,0);Assert ($responseLength-gt 0 -and $responseLength-le 65536) 'bounded denied response';$response=Read-FrameBytes $pipe $responseLength;$pipe.Dispose();Assert ([Text.Encoding]::UTF8.GetString($response).Contains('request_rejected')) 'untrusted executable peer rejected'
  # Add a trusted fixture release that probes actual worker ACLs and spawns a descendant.
  $testCommit='c'*40;$release=Join-Path $root "releases\$testCommit";New-Item -ItemType Directory -Path $release|Out-Null
  [IO.File]::WriteAllText((Join-Path $release 'package.json'),'{"type":"module"}',[Text.UTF8Encoding]::new($false));New-Item -ItemType Directory -Path (Join-Path $release 'test')|Out-Null
@@ -82,6 +83,21 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  Assert ($completed.status-eq 'succeeded') 'actual worker denied protected read and immutable write'
  $childPid=[int](Get-Content "$root\scratch\child-pid.txt")
  Assert (-not(Get-Process -Id $childPid -ErrorAction SilentlyContinue)) 'Job Object killed detached descendant on normal exit'
+ # Crash an actual restricted worker while its job has a detached child.
+ $crashTest=$test.Replace("child.unref();});","child.unref();setInterval(()=>{},1000);});")
+ [IO.File]::WriteAllText((Join-Path $release 'test\isolation.test.js'),$crashTest,[Text.UTF8Encoding]::new($false))
+ $catalog.Files['test/isolation.test.js']=(Get-FileHash (Join-Path $release 'test\isolation.test.js')).Hash.ToLowerInvariant()
+ [IO.File]::WriteAllText("$root\catalog\$testCommit.json",($catalog|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
+ Remove-Item "$root\scratch\child-pid.txt"
+ $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null
+ for($i=0;$i-lt 20 -and -not(Test-Path "$root\scratch\child-pid.txt");$i++){Start-Sleep -Seconds 1}
+ Assert (Test-Path "$root\scratch\child-pid.txt") 'restricted job child started before crash test'
+ $overlap=Invoke-Operator $scope;Assert ($overlap.ok-eq $false) 'concurrent operation denied'
+ $childPid=[int](Get-Content "$root\scratch\child-pid.txt")
+ Stop-ScheduledTask -TaskName 'SmartHome-WebCoRE-Worker'
+ $completed=Await-Request $request.requestId;Assert ($completed.status-eq 'failed') 'worker crash does not retry consumed approval'
+ Assert (-not(Get-Process -Id $childPid -ErrorAction SilentlyContinue)) 'worker crash closed job and killed descendant'
+ Start-ScheduledTask -TaskName 'SmartHome-WebCoRE-Worker';Start-Sleep -Seconds 3
  $scope.operation='restart_mcp';$scope.commit=$state.Current.Commit;$scope.sha256=$state.Current.Sha256
  $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
  Assert ($completed.status-eq 'succeeded') ("controlled service restart: "+($completed.result|ConvertTo-Json -Compress))
@@ -104,6 +120,14 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  $events=@(Get-ChildItem "$root\audit\*.jsonl"|Get-Content|ForEach-Object{$_|ConvertFrom-Json})
  Assert (@($events|Where-Object outcome -eq 'succeeded').Count-ge 2) 'durable outcomes recorded'
  Assert (-not((Get-ChildItem "$root\audit\*.jsonl"|Get-Content)-match 'fixture-canary|stdout|password|command:')) 'audit contains metadata only'
+ $beforeAuditFailure=Get-Content "$root\state.json" -Raw
+ $auditPath="$root\audit";$originalAcl=Get-Acl $auditPath;$deniedAcl=Get-Acl $auditPath
+ $deniedAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-18'),'Write','ContainerInherit,ObjectInherit','None','Deny'))
+ Set-Acl $auditPath $deniedAcl
+ $scope.operation='run_webcore_syntax_check';$scope.expectedCurrentSha256=$state.Current.Sha256
+ $rejected=$false;try{$unavailable=Invoke-Operator $scope;$rejected=$unavailable.ok-eq $false}catch{$rejected=$true}finally{Set-Acl $auditPath $originalAcl}
+ Assert $rejected 'audit write failure prevents request execution'
+ Assert ((Get-Content "$root\state.json" -Raw)-eq $beforeAuditFailure) 'audit outage leaves release state unchanged'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover
  Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall
