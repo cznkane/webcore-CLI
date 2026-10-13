@@ -74,19 +74,20 @@ function Remove-WorkerIdentity([string]$Sid){
  }
 }
 function Export-Task([string]$Name){$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();[string]$scheduler.GetFolder('\').GetTask($Name).Xml}
-function Snapshot([string]$Source,[string]$Commit,[switch]$IsSnapshot){
+function Snapshot([string]$Source,[string]$Commit,[string]$EntryPoint,[switch]$IsSnapshot){
  Assert-NoReparse $Source
  $destination=Join-Path $Root "releases\$Commit"
  if(Test-Path -LiteralPath $destination){throw 'Release destination already exists'}
  New-Item -ItemType Directory -Path $destination | Out-Null
  foreach($directory in @('server','test','.codex-plugin')){if(Test-Path -LiteralPath (Join-Path $Source $directory)){Get-ChildItem -LiteralPath (Join-Path $Source $directory) -Recurse -Force | ForEach-Object{Assert-NoReparse $_.FullName};Copy-Item -LiteralPath (Join-Path $Source $directory) -Destination $destination -Recurse}}
  foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $destination}
+ if($EntryPoint -eq 'windows-readonly-launcher.cjs'){Copy-Item -LiteralPath (Join-Path $Source $EntryPoint) -Destination $destination}
  Protect $destination $script:WorkerSid
  $files=[ordered]@{}
  Get-ChildItem -LiteralPath $destination -Recurse -File | Sort-Object FullName | ForEach-Object{$files[$_.FullName.Substring($destination.Length+1).Replace('\','/')]=Hash $_.FullName}
  $digest=Text-Hash ($files|ConvertTo-Json -Compress)
  $version=(Get-Content (Join-Path $destination 'package.json') -Raw|ConvertFrom-Json).version
- $release=@{Commit=$Commit;Sha256=$digest;Root=$destination;Files=$files;Version=$version;IsSnapshot=[bool]$IsSnapshot}
+ $release=@{Commit=$Commit;Sha256=$digest;Root=$destination;Files=$files;Version=$version;IsSnapshot=[bool]$IsSnapshot;EntryPoint=$EntryPoint}
  Write-Json (Join-Path $Root "catalog\$Commit.json") $release
  return $release
 }
@@ -181,18 +182,45 @@ $watchdog=Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog' -TaskPath '\'
 if($mcp.Principal.UserId -notin @('SYSTEM','S-1-5-18','NT AUTHORITY\SYSTEM')){throw 'Unexpected existing service identity; installer never elevates it'}
 if($mcp.State -ne 'Running' -or -not $watchdog.Settings.Enabled){throw 'Existing runtime/watchdog not healthy; preserve it and diagnose first'}
 $mcpXml=Export-Task 'SmartHome-WebCoRE-MCP';$watchdogXml=Export-Task 'SmartHome-WebCoRE-Watchdog'
-if(-not $TunnelConfigPath){
- $candidates=@(Get-ChildItem -LiteralPath 'C:\ProgramData\SmartHome\WebCoRE' -File -Recurse | Where-Object Extension -in @('.yaml','.yml') | Where-Object {([IO.File]::ReadAllText($_.FullName)).Contains('server')})
- if($candidates.Count -ne 1){throw 'Unique tunnel config not found; provide -TunnelConfigPath once during installation'}
- $TunnelConfigPath=$candidates[0].FullName
-}
+# Bind discovery to the actual scheduled-task action, never a filename/content search.
+if(@($mcp.Actions).Count -ne 1){throw 'Exactly one existing MCP task action required'}
+$configMatches=@([regex]::Matches([string]$mcp.Actions[0].Arguments,'(?i)(?:^|\s)--config(?:=|\s+)(?:"([^"]+)"|''([^'']+)''|(\S+))'))
+if($configMatches.Count -ne 1){throw 'Unique --config task argument required; preserve runtime and review task'}
+$taskConfig=@($configMatches[0].Groups | Select-Object -Skip 1 | Where-Object Success | ForEach-Object Value)[0]
+if(-not [IO.Path]::IsPathRooted($taskConfig)){throw 'Absolute existing task configuration path required'}
+$taskConfig=[IO.Path]::GetFullPath($taskConfig)
+if($TunnelConfigPath -and [IO.Path]::GetFullPath($TunnelConfigPath) -ne $taskConfig){throw 'Supplied configuration differs from active task'}
+$TunnelConfigPath=$taskConfig
 Assert-Protected $TunnelConfigPath
-$yaml=[IO.File]::ReadAllText($TunnelConfigPath).Replace('\\','\')
-$paths=@([regex]::Matches($yaml,'[A-Za-z]:\\[^"\r\n:]*?\\server\\index\.js')|ForEach-Object Value|Select-Object -Unique)
-if($paths.Count -ne 1){throw 'Unique current MCP payload path not established'}
-$originalRoot=Split-Path (Split-Path $paths[0] -Parent) -Parent
+$yaml=[IO.File]::ReadAllText($TunnelConfigPath)
+$paths=@([regex]::Matches($yaml,'[A-Za-z]:[\\/][^"''\r\n:]*?(?:[\\/]server[\\/]index\.js|[\\/]windows-readonly-launcher\.cjs)') | ForEach-Object Value)
+if($paths.Count -ne 1){throw 'Unique supported current MCP payload path not established'}
+$commandText=$paths[0]
+$commandPath=[IO.Path]::GetFullPath($commandText.Replace('\\','\').Replace('/','\'))
+$commandEncoding=if($commandText.Contains('\\')){'escaped'}elseif($commandText.Contains('/')){'forward'}else{'backslash'}
+$entryPoint=if([IO.Path]::GetFileName($commandPath) -eq 'windows-readonly-launcher.cjs'){'windows-readonly-launcher.cjs'}else{'server/index.js'}
+$originalRoot=if($entryPoint -eq 'server/index.js'){Split-Path (Split-Path $commandPath -Parent) -Parent}else{Split-Path $commandPath -Parent}
 Assert-Protected $originalRoot
+Assert-Protected $commandPath
+Assert-ImmutableParents $commandPath
+if($entryPoint -eq 'windows-readonly-launcher.cjs'){
+ # Only the reviewed, fixed environment-enabling wrapper is supported, never arbitrary code.
+ $wrapper=[IO.File]::ReadAllText($commandPath)
+ $contract='\A\s*''use strict'';\s*process\.env\.WEBCORE_WINDOWS_MANAGEMENT_READONLY\s*=\s*''enabled'';\s*require\(''\./server/index\.js''\);\s*\z'
+ if($wrapper -notmatch $contract){throw 'Unsupported launcher content; preserve runtime and review it'}
+}
 if(-not(Test-Path -LiteralPath (Join-Path $originalRoot 'package.json'))){throw 'Current runtime package missing'}
+# Prove the currently running tunnel child matches the selected script before provisioning.
+$tunnelExe=[string]$mcp.Actions[0].Execute
+$tunnels=@(Get-CimInstance Win32_Process -Filter "Name='tunnel-client.exe'" | Where-Object ExecutablePath -eq $tunnelExe)
+if($tunnels.Count -ne 1){throw 'Unique current tunnel process required'}
+$nodes=@(Get-CimInstance Win32_Process -Filter "Name='node.exe'" | Where-Object ParentProcessId -eq $tunnels[0].ProcessId)
+$commandCandidates=@($commandPath,$commandPath.Replace('\','/'))
+$matched=@($nodes | Where-Object {
+ $line=[string]$_.CommandLine
+ $_.ExecutablePath -eq $NodePath -and @($commandCandidates | Where-Object {$line.EndsWith(' '+$_,[StringComparison]::OrdinalIgnoreCase) -or $line.EndsWith('"'+$_+'"',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 1
+})
+if($nodes.Count -ne 1 -or $matched.Count -ne 1){throw 'Running MCP payload does not match active task configuration'}
 Assert-Protected $NodePath
 $version=& $NodePath --version
 if($LASTEXITCODE -ne 0 -or $version -notmatch '^v24\.'){throw 'Pinned Node.js 24 required'}
@@ -224,15 +252,15 @@ try{
  Protect (Join-Path $Root 'downloads') $null
  foreach($binary in @('VmManagement.exe','VmManagementApprove.exe')){Copy-Item -LiteralPath (Join-Path $PackageRoot "bin\$binary") -Destination (Join-Path $Root "bin\$binary")}
  Copy-Item -LiteralPath $NodePath -Destination (Join-Path $Root 'bin\node.exe')
- $baselineCommit=(Text-Hash $paths[0]).Substring(0,40)
- $baseline=Snapshot $originalRoot $baselineCommit -IsSnapshot
- $candidate=Snapshot $PackageRoot $manifest.Commit
+ $baselineCommit=(Text-Hash $commandPath).Substring(0,40)
+ $baseline=Snapshot $originalRoot $baselineCommit $entryPoint -IsSnapshot
+ $candidate=Snapshot $PackageRoot $manifest.Commit $entryPoint
  Copy-Item -LiteralPath $TunnelConfigPath -Destination (Join-Path $Root 'recovery\original-tunnel.yaml')
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-mcp-task.xml'),$mcpXml,$Utf8)
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-watchdog-task.xml'),$watchdogXml,$Utf8)
- $cfg=@{Root=$Root;WorkerSid=$WorkerSid;OperatorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;ExeSha256=Hash (Join-Path $Root 'bin\VmManagement.exe');NodePath=$NodePath;NodeSha256=Hash $NodePath;WorkerNodePath=Join-Path $Root 'bin\node.exe';WorkerNodeSha256=Hash (Join-Path $Root 'bin\node.exe');TunnelConfig=$TunnelConfigPath;TunnelExe=$tunnelExe;TunnelExeSha256=Hash $tunnelExe;McpTaskXmlSha256=Text-Hash $mcpXml;WatchdogTaskXmlSha256=Text-Hash $watchdogXml;InitialCommand=$paths[0];InitialConfigSha256=Hash $TunnelConfigPath;CandidateCommit=$candidate.Commit;CandidateSha256=$candidate.Sha256}
+ $cfg=@{Root=$Root;WorkerSid=$WorkerSid;OperatorSid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value;ExeSha256=Hash (Join-Path $Root 'bin\VmManagement.exe');NodePath=$NodePath;NodeSha256=Hash $NodePath;WorkerNodePath=Join-Path $Root 'bin\node.exe';WorkerNodeSha256=Hash (Join-Path $Root 'bin\node.exe');TunnelConfig=$TunnelConfigPath;TunnelExe=$tunnelExe;TunnelExeSha256=Hash $tunnelExe;McpTaskXmlSha256=Text-Hash $mcpXml;WatchdogTaskXmlSha256=Text-Hash $watchdogXml;InitialCommand=$commandPath;ReleaseEntryPoint=$entryPoint;InitialConfigSha256=Hash $TunnelConfigPath;CandidateCommit=$candidate.Commit;CandidateSha256=$candidate.Sha256}
  Write-Json (Join-Path $Root 'config.json') $cfg
- Write-Json (Join-Path $Root 'state.json') @{Current=$baseline;Previous=$null;CommandRoot=$originalRoot;ConfigSha256=Hash $TunnelConfigPath;Recovery='clean'}
+ Write-Json (Join-Path $Root 'state.json') @{Current=$baseline;Previous=$null;CommandRoot=$originalRoot;CommandText=$commandText;CommandEncoding=$commandEncoding;ConfigSha256=Hash $TunnelConfigPath;Recovery='clean'}
  New-NetFirewallRule -Name $FirewallName -DisplayName 'SmartHome restricted worker outbound deny' -Direction Outbound -Action Block -Profile Any -LocalUser "D:(A;;CC;;;$WorkerSid)" | Out-Null
  $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable
  $trigger=New-ScheduledTaskTrigger -AtStartup

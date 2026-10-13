@@ -16,6 +16,11 @@ public static class SelfTest {
   var sid=WindowsIdentity.GetCurrent().User.Value;var exe=Assembly.GetExecutingAssembly().Location;var hash=Guard.Hash(exe);
   Denied(()=>Guard.Full(@"C:\safe\..\escape"),"path_traversal");Denied(()=>Guard.Full(@"\\server\share"),"unc_path");Denied(()=>Guard.Full(@"C:\safe\file:stream"),"alternate_stream");
   Denied(()=>Guard.Keys(Guard.Parse("{\"action\":\"health\",\"command\":\"whoami\"}"),"action"),"extra_command");Check(!Host.Operations.Contains("powershell"),"no_shell_operation");
+  var pointer=@"C:\runtime\windows-readonly-launcher.cjs";
+  foreach(var encoding in new[]{"forward","escaped","backslash"}) Check(Host.DecodePointer(Host.EncodePointer(pointer,encoding))==pointer,"pointer_"+encoding);
+  Denied(()=>Host.EncodePointer(pointer,"unsupported"),"pointer_encoding_allowlist");
+  Check(Host.CommandMatches("node \"C:/runtime/windows-readonly-launcher.cjs\"",pointer),"forward_wrapper_command");
+  Check(!Host.CommandMatches("node \"C:/runtime/windows-readonly-launcher.cjs\" --eval unapproved",pointer),"extra_command_args_rejected");
   var now=DateTime.UtcNow;var approval=new Request{Status="pending",Expires=now.AddMinutes(1)};Check(Host.CanApprove(approval,now,false),"scoped_pending_approval");Check(!Host.CanApprove(approval,now,true),"approval_concurrency");approval.Expires=now.AddSeconds(-1);Check(!Host.CanApprove(approval,now,false),"expired_approval");approval.Expires=now.AddMinutes(1);approval.Status="consumed";Check(!Host.CanApprove(approval,now,false),"consumed_approval");
   using(var pipe=Pipe.Server("SmartHome-WebCoRE-Selftest",sid)) {
    Denied(()=>{using(var duplicate=Pipe.Server("SmartHome-WebCoRE-Selftest",sid)){}},"first_instance");
