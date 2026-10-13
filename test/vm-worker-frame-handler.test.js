@@ -26,7 +26,7 @@ test('authenticated IPC admission executes once and rejects replay and forged ap
   await assert.rejects(handler(frame), /replay/);
   const forged = { ...msg, requestId: randomBytes(18).toString('base64url'), approvalId: randomBytes(24).toString('base64url') };
   forged.mac = signVmIpcMessage(forged, secret);
-  await assert.rejects(handler(Buffer.from(JSON.stringify(forged))), /Trusted approval/);
+  await assert.rejects(handler(Buffer.from(JSON.stringify(forged))), /Approval mismatch/);
   assert.equal(calls, 1);
 });
 test('unauthenticated and malformed frames never reach approval source', async () => {
