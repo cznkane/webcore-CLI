@@ -86,6 +86,6 @@ public static class Pipe {
  }
  public static Dictionary<string,object> Receive(Stream s,int max=4096) { var h=Read(s,4); int n=BitConverter.ToInt32(h,0); Guard.Require(n>=2&&n<=max,"frame_limit"); return Guard.Parse(new UTF8Encoding(false,true).GetString(Read(s,n))); }
  static byte[] Read(Stream s,int n) { var b=new byte[n];int count=0;while(count<n) { int k=s.Read(b,count,n-count); Guard.Require(k>0,"frame_eof");count+=k;}return b; }
- public static void Send(Stream s,object obj) { var b=Encoding.UTF8.GetBytes(Guard.Json.Serialize(obj)); Guard.Require(b.Length<=65536,"response_limit");var h=BitConverter.GetBytes(b.Length);s.Write(h,0,4);s.Write(b,0,b.Length);s.Flush(); }
+ public static void Send(Stream s,object obj) { var b=Encoding.UTF8.GetBytes(Guard.Json.Serialize(obj)); Guard.Require(b.Length<=65536,"response_limit");var h=BitConverter.GetBytes(b.Length);s.Write(h,0,4);s.Write(b,0,b.Length);s.Flush();var pipe=s as NamedPipeServerStream;if(pipe!=null)pipe.WaitForPipeDrain(); }
 }
 }

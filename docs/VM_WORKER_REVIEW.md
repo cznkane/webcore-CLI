@@ -1,3 +1,5 @@
-# VM worker security review
+# Windows worker review
 
-The new policy module is not an execution worker. Production management remains read-only. Before enabling test execution, implement a separate non-admin worker, trusted release integrity verification, independent one-use approvals, authenticated local IPC, strict path permissions, bounded execution, process-tree cleanup, audit logging, and Windows integration tests. No deployment to TERMINAL is authorized by this PR.
+The inert Node prototypes have been superseded and removed. Review the integrated native host, MCP adapter, installer and disposable Windows integration tests in PR #5. The security assessment and release gates are in `VM_MANAGEMENT_RELEASE_GATE.md`; installation and recovery steps are in `WINDOWS_VM_MANAGEMENT_INSTALL.md`.
+
+No production installation, restart, task change, merge, piston execution or device operation was performed during engineering. Passing CI is necessary but does not certify installed TERMINAL state.
