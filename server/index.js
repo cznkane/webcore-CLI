@@ -1,5 +1,5 @@
-import { runManagementReadOnly, managementToolNames } from './windows-management.js';
 #!/usr/bin/env node
+import { runManagementReadOnly, managementToolNames } from './windows-management.js';
 import { createInterface } from 'node:readline';
 import { loadConfig } from './config.js';
 import { WebcoreClient } from './client.js';
