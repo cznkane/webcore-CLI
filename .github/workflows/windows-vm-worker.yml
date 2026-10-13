@@ -37,6 +37,7 @@ jobs:
       - name: Native pipe and identity checks
         shell: powershell
         run: |
+          $env:SMART_HOME_TEST_NODE = (Get-Command node.exe).Source
           & ./build/vm-management/VmManagement.exe selftest
           if ($LASTEXITCODE -ne 0) { throw 'Native security checks failed' }
       - name: Real restricted identity and installation integration

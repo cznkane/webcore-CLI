@@ -11,7 +11,11 @@ $fixture='C:\SmartHome\VmManagementFixture'
 $webcore='C:\ProgramData\SmartHome\WebCoRE'
 $createdTasks=@()
 function Assert($Condition,[string]$Name){if(-not $Condition){throw "FAIL: $Name"};Write-Output "PASS: $Name"}
-function Secure([string]$Path){& icacls.exe $Path /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /setowner '*S-1-5-32-544'|Out-Null;if($LASTEXITCODE-ne 0){throw 'Fixture ACL failure'}}
+function Secure([string]$Path){
+ $acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtection($true,$false);$acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'))
+ foreach($sid in @('S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
+ Set-Acl -LiteralPath $Path -AclObject $acl
+}
 function Invoke-Operator($Value){$json=$Value|ConvertTo-Json -Compress -Depth 8;$result=$json|& (Join-Path $root 'bin\VmManagement.exe') operator-client;if($LASTEXITCODE-ne 0){throw 'Operator client failure'};return ($result|ConvertFrom-Json)}
 function Await-Request([string]$Id){for($i=0;$i-lt 150;$i++){Start-Sleep -Seconds 1;$all=Invoke-Operator @{action='list'};$r=@($all.requests|Where-Object requestId -eq $Id)[0];if($r.status -in @('succeeded','failed','denied')){return $r}};throw 'Request completion timeout'}
 try{

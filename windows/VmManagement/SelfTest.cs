@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Diagnostics;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Threading;
@@ -21,6 +22,19 @@ public static class SelfTest {
    var result=Pipe.Call("SmartHome-WebCoRE-Selftest",exe,hash,new {action="health"},10000,sid);t.Join();Check((bool)result["ok"]&&peer==sid,"mutual_peer_identity");
   }
   using(var stream=new MemoryStream(new byte[]{1,16,0,0})) Denied(()=>Pipe.Receive(stream),"oversize_frame");
+  var node=Environment.GetEnvironmentVariable("SMART_HOME_TEST_NODE");Guard.Require(!String.IsNullOrEmpty(node),"test_node_required");
+  var root=Path.Combine(Path.GetTempPath(),"SmartHomeNative-"+Guard.Id());Directory.CreateDirectory(root);
+  try {
+   File.WriteAllText(Path.Combine(root,"package.json"),"{\"type\":\"module\"}");
+   var pidFile=Path.Combine(root,"child.pid");var pidLiteral=Guard.Json.Serialize(pidFile);
+   var fixture="import {spawn} from 'node:child_process';import fs from 'node:fs';const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});fs.writeFileSync("+pidLiteral+",String(c.pid));c.unref();";
+   File.WriteAllText(Path.Combine(root,"containment.test.js"),fixture);
+   var normal=Guard.Parse(Guard.Json.Serialize(Job.Run(node,root,"--test",10000,root)));Check((bool)normal["ok"],"job_normal_exit");
+   var pid=Int32.Parse(File.ReadAllText(pidFile));bool alive=false;try{using(var child=Process.GetProcessById(pid))alive=!child.HasExited;}catch(ArgumentException){}Check(!alive,"detached_child_killed");
+   File.WriteAllText(Path.Combine(root,"containment.test.js"),fixture+"setInterval(()=>{},1000);");
+   var timed=Guard.Parse(Guard.Json.Serialize(Job.Run(node,root,"--test",1000,root)));Check((bool)timed["timedOut"],"job_timeout");
+   pid=Int32.Parse(File.ReadAllText(pidFile));alive=false;try{using(var child=Process.GetProcessById(pid))alive=!child.HasExited;}catch(ArgumentException){}Check(!alive,"timeout_descendant_killed");
+  }finally{Directory.Delete(root,true);}
   Console.WriteLine("Native security checks passed: "+count);return 0;
  }
 }
