@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 // Policy module for a future dedicated non-admin worker. No process spawning,
 // IPC listener, network endpoint, or service integration is enabled here.
 const OPERATIONS = Object.freeze({
-  run_webcore_tests: Object.freeze({ executable: 'node.exe', args: Object.freeze(['--test', 'test/*.test.js']) }),
+  run_webcore_tests: Object.freeze({ executable: 'node.exe', args: Object.freeze(['--test']) }),
   run_webcore_syntax_check: Object.freeze({ executable: 'node.exe', args: Object.freeze(['--check', 'server/index.js']) })
 });
 const SHA256 = /^[a-f0-9]{64}$/;
