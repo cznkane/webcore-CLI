@@ -2,7 +2,7 @@
 #Requires -RunAsAdministrator
 # Disposable hosted-runner integration only. Never use on TERMINAL.
 [CmdletBinding()]
-param()
+param([ValidateSet('direct','wrapper')][string]$Layout='direct')
 $ErrorActionPreference='Stop'
 if($env:GITHUB_ACTIONS -ne 'true' -or $env:COMPUTERNAME -eq 'TERMINAL'){throw 'Disposable GitHub Windows runner required'}
 $source=Split-Path $PSScriptRoot -Parent
@@ -27,13 +27,23 @@ try{
  $payload=Join-Path $fixture 'payload';New-Item -ItemType Directory -Path $payload|Out-Null
  foreach($dir in @('server','test','.codex-plugin')){Copy-Item -LiteralPath (Join-Path $source $dir) -Destination $payload -Recurse}
  foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $source $file) -Destination $payload}
+ $entryPoint=if($Layout -eq 'wrapper'){'windows-readonly-launcher.cjs'}else{'server/index.js'}
+ Copy-Item -LiteralPath (Join-Path $source 'windows-readonly-launcher.cjs') -Destination $payload
+ # Non-runtime residue must not defeat protected source-file verification.
+ [IO.File]::WriteAllText((Join-Path $payload 'retained-readme.txt'),'fixture residue')
  $node=Join-Path $fixture 'node.exe';Copy-Item -LiteralPath (Get-Command node.exe).Source -Destination $node
  $fixtureSource=@'
 using System;using System.Threading;using System.IO;using System.Diagnostics;using System.Text.RegularExpressions;
-public class FixtureTunnel{public static void Main(string[] args){var text=File.ReadAllText(args[1]).Replace("\\\\","\\");var match=Regex.Match(text,@"[A-Za-z]:\\[^'\r\n]*?\\server\\index\.js");var psi=new ProcessStartInfo{FileName=@"C:\SmartHome\VmManagementFixture\node.exe",Arguments="\""+match.Value+"\"",UseShellExecute=false,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};var child=Process.Start(psi);child.OutputDataReceived+=(s,e)=>{};child.ErrorDataReceived+=(s,e)=>{};child.BeginOutputReadLine();child.BeginErrorReadLine();while(true)Thread.Sleep(1000);}}
+public class FixtureTunnel{public static void Main(string[] args){var text=File.ReadAllText(args[1]).Replace("\\\\","\\");var match=Regex.Match(text,@"[A-Za-z]:[\\/][^'\r\n]*?(?:[\\/]server[\\/]index\.js|[\\/]windows-readonly-launcher\.cjs)");var psi=new ProcessStartInfo{FileName=@"C:\SmartHome\VmManagementFixture\node.exe",Arguments="\""+match.Value+"\"",UseShellExecute=false,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};var child=Process.Start(psi);child.OutputDataReceived+=(s,e)=>{};child.ErrorDataReceived+=(s,e)=>{};child.BeginOutputReadLine();child.BeginErrorReadLine();while(true)Thread.Sleep(1000);}}
 '@
  Add-Type -TypeDefinition $fixtureSource -OutputAssembly (Join-Path $fixture 'tunnel-client.exe') -OutputType ConsoleApplication
- $yaml=Join-Path $webcore 'fixture.yaml';[IO.File]::WriteAllText($yaml,"mcp:`n  commands:`n    - command: 'node $payload\server\index.js'`n",[Text.UTF8Encoding]::new($false))
+ $yaml=Join-Path $webcore 'fixture.yaml'
+ $pointer=Join-Path $payload $entryPoint
+ if($Layout -eq 'wrapper'){$pointer=$pointer.Replace('\','/')}
+ [IO.File]::WriteAllText($yaml,"mcp:`n  commands:`n    - command: 'node $pointer'`n",[Text.UTF8Encoding]::new($false))
+ $originalYaml=[IO.File]::ReadAllBytes($yaml)
+ $decoy=Join-Path $webcore 'fixture.pre-release.yaml'
+ [IO.File]::WriteAllText($decoy,"mcp: 'node C:/obsolete/server/index.js'",[Text.UTF8Encoding]::new($false))
  $principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
  $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
  $trigger=New-ScheduledTaskTrigger -AtStartup
@@ -45,13 +55,26 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  Assert ($parserErrors.Count-eq 0) 'PowerShell installer syntax'
  & "$PSScriptRoot\Package-VmManagement.ps1" -Commit ('a'*40)
  $package=Join-Path $fixture 'package';Copy-Item -LiteralPath (Join-Path $source 'build\package') -Destination $package -Recurse
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node -TunnelConfigPath $yaml
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node -TunnelConfigPath $yaml
+ $wrongConfigRejected=$false
+ try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node -TunnelConfigPath $decoy}catch{$wrongConfigRejected=$_.Exception.Message -eq 'Supplied configuration differs from active task'}
+ Assert $wrongConfigRejected 'stale backup cannot be substituted for active configuration'
+ if($Layout -eq 'wrapper'){
+  $wrapperPath=Join-Path $payload $entryPoint;$originalWrapper=[IO.File]::ReadAllText($wrapperPath)
+  [IO.File]::WriteAllText($wrapperPath,$originalWrapper+"`nprocess.env.EXTRA = 'unapproved';")
+  $unsupportedRejected=$false
+  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node}catch{$unsupportedRejected=$_.Exception.Message -eq 'Unsupported launcher content; preserve runtime and review it'}
+  Assert $unsupportedRejected 'unreviewed wrapper code fails preflight'
+  [IO.File]::WriteAllText($wrapperPath,$originalWrapper,[Text.UTF8Encoding]::new($false))
+ }
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node
  Start-Sleep -Seconds 3
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node -TunnelConfigPath $yaml
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'installation preserves existing runtime'
  $workerSid=(Get-LocalUser -Name 'SmartHomeVmWorker').SID.Value
  $state=Get-Content "$root\state.json" -Raw|ConvertFrom-Json
+ Assert ($state.Current.EntryPoint -eq $entryPoint -and (Test-Path (Join-Path $state.Current.Root $entryPoint))) 'snapshot preserves actual entry point'
+ Assert ((Get-Content "$root\config.json" -Raw|ConvertFrom-Json).TunnelConfig -eq $yaml) 'active task configuration selected despite decoy backup'
  $scope=@{action='request';operation='run_webcore_syntax_check';commit=$state.Current.Commit;sha256=$state.Current.Sha256;expectedCurrentSha256=$state.Current.Sha256}
  $request=Invoke-Operator $scope;Assert ($request.status-eq 'pending') 'independent scoped request queued'
  $unexpected=Invoke-Operator @{action='approve';requestId=('b'*48)};Assert ($unexpected.ok-eq $false) 'forged approval rejected'
@@ -103,7 +126,7 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  $scope.operation='restart_mcp';$scope.commit=$state.Current.Commit;$scope.sha256=$state.Current.Sha256
  $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
  Assert ($completed.status-eq 'succeeded') ("controlled service restart: "+($completed.result|ConvertTo-Json -Compress))
- Assert ((Get-Content $yaml -Raw).Contains($payload)) 'restart preserved release pointer'
+ Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'restart preserves exact original YAML bytes'
  $main=Invoke-RestMethod -Uri 'https://api.github.com/repos/cznkane/webcore-CLI/branches/main' -Headers @{'User-Agent'='SmartHome-CI'}
  $commit=[string]$main.commit.sha;$archive=Join-Path $fixture 'merged-release.zip'
  Invoke-WebRequest -UseBasicParsing -Uri "https://codeload.github.com/cznkane/webcore-CLI/zip/$commit" -OutFile $archive
@@ -131,7 +154,7 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  Assert $rejected 'audit write failure prevents request execution'
  Assert ((Get-Content "$root\state.json" -Raw)-eq $beforeAuditFailure) 'audit outage leaves release state unchanged'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover -PackageRoot $package
- Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
+ Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'out-of-band recovery restores exact original YAML bytes'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall -PackageRoot $package
  $remainingProfile=Get-CimInstance Win32_UserProfile -Filter "SID='$workerSid'"
  Assert ($null -eq $remainingProfile -or ((Test-Path "$root\recovery\profile-cleanup.json") -and (Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-ProfileCleanup' -ErrorAction SilentlyContinue))) 'profile removed or explicitly scheduled for retirement'
@@ -139,7 +162,7 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  Assert (-not(Test-Path "$root\installed.json")) 'uninstall disables MCP management registration'
  Assert (-not(Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Management' -ErrorAction SilentlyContinue)) 'uninstall removed only management tasks'
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'uninstall preserves original runtime'
- Write-Output 'WINDOWS INTEGRATION PASS'
+ Write-Output "WINDOWS INTEGRATION PASS: $Layout"
 }finally{
  foreach($name in @('SmartHome-WebCoRE-Management','SmartHome-WebCoRE-Worker','SmartHome-WebCoRE-ProfileCleanup')+$createdTasks){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Get-Process tunnel-client -ErrorAction SilentlyContinue|Stop-Process -Force

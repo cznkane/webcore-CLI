@@ -18,6 +18,10 @@ permissions:
 
 jobs:
   windows-worker:
+    strategy:
+      fail-fast: false
+      matrix:
+        layout: [direct, wrapper]
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -40,7 +44,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Native security checks failed' }
       - name: Real restricted identity and installation integration
         shell: powershell
-        run: ./scripts/Test-VmManagementIntegration.ps1
+        run: ./scripts/Test-VmManagementIntegration.ps1 -Layout ${{ matrix.layout }}
       - name: Full suite on Windows
         run: npm test
       - name: Build pinned installation artifact
@@ -48,7 +52,7 @@ jobs:
         run: ./scripts/Package-VmManagement.ps1 -Commit '${{ github.event.pull_request.head.sha || github.sha }}'
       - uses: actions/upload-artifact@v4
         with:
-          name: SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}
+          name: SmartHome-VmManagement-${{ matrix.layout }}-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}.zip
             build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}.zip.sha256

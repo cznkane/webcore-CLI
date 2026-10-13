@@ -17,10 +17,11 @@ using System.Windows.Forms;
 
 namespace SmartHome.VmManagement {
 public sealed class Config {
- public string Root, WorkerSid, OperatorSid, ExeSha256, NodePath, NodeSha256, WorkerNodePath, WorkerNodeSha256, TunnelConfig, TunnelExe, TunnelExeSha256, McpTaskXmlSha256, WatchdogTaskXmlSha256, InitialCommand, InitialConfigSha256, CandidateCommit, CandidateSha256;
+ public int SchemaVersion;
+ public string Root, WorkerSid, OperatorSid, ExeSha256, NodePath, NodeSha256, WorkerNodePath, WorkerNodeSha256, TunnelConfig, TunnelExe, TunnelExeSha256, McpTaskXmlSha256, WatchdogTaskXmlSha256, InitialCommand, InitialConfigSha256, CandidateCommit, CandidateSha256, ReleaseEntryPoint;
 }
-public sealed class Release { public string Commit, Sha256, Root, Version; public bool IsSnapshot; public Dictionary<string,string> Files; }
-public sealed class State { public Release Current, Previous;public string ConfigSha256, CommandRoot;public string Recovery="clean"; }
+public sealed class Release { public string Commit, Sha256, Root, Version, EntryPoint; public bool IsSnapshot; public Dictionary<string,string> Files; }
+public sealed class State { public Release Current, Previous;public string ConfigSha256, CommandRoot, CommandText, CommandEncoding;public string Recovery="clean"; }
 public sealed class Request { public string Id,Operation,Commit,Sha256,ExpectedCurrentSha256,Status;public DateTime Expires;public object Result; }
 public static class Host {
  public static readonly string[] Operations={"run_webcore_tests","run_webcore_syntax_check","stage_release","deploy_release","rollback_release","restart_mcp"};
@@ -30,6 +31,7 @@ public static class Host {
  const string BrokerPipe="SmartHome-WebCoRE-Management",OperatorPipe="SmartHome-WebCoRE-Approval",WorkerPipe="SmartHome-WebCoRE-Worker";
  static void Load() {
   var path=Path.GetFullPath(configPath);Guard.NoReparse(path);c=Guard.Read<Config>(path);
+  Guard.Require(c.SchemaVersion==2,"unsupported_installation_schema");
   ServicePointManager.SecurityProtocol=SecurityProtocolType.Tls12;
   Guard.Full(c.Root);Guard.Require(String.Equals(Path.GetFullPath(exe),Path.Combine(c.Root,"bin","VmManagement.exe"),StringComparison.OrdinalIgnoreCase),"installation_path");
   Guard.Protected(path,c.WorkerSid);Guard.Protected(exe,c.WorkerSid);
@@ -82,9 +84,11 @@ public static class Host {
   var path=Path.Combine(c.Root,"catalog",commit+".json");Guard.Protected(path,c.WorkerSid);var r=Guard.Read<Release>(path);
   Guard.Require(r.Commit==commit&&r.Sha256==digest&&r.Root==Path.Combine(c.Root,"releases",commit),"release_scope");Verify(r);return r;
  }
- public static void Verify(Release r) {
+ public static void Verify(Release r) { VerifyFiles(r,true); }
+ static void VerifyFiles(Release r,bool exact) {
   Guard.Require(r!=null&&r.Files!=null&&r.Files.Count>0&&r.Files.Count<=2048,"invalid_manifest");Guard.Protected(r.Root,c==null?null:c.WorkerSid);
   foreach(var entry in r.Files) { Guard.Require(!String.IsNullOrEmpty(entry.Key)&&entry.Key.Split('/').All(part=>part!="."&&part!=".."&&part.Length>0)&&!entry.Key.Contains("\\")&&!entry.Key.Contains(":"),"manifest_path");var p=Path.Combine(r.Root,entry.Key.Replace('/',Path.DirectorySeparatorChar));Guard.Protected(p,c==null?null:c.WorkerSid);Guard.Require(Guard.Hash(p)==entry.Value,"release_integrity"); }
+  if(!exact) return;
   var actual=Directory.GetFiles(r.Root,"*",SearchOption.AllDirectories).Select(p=>p.Substring(r.Root.Length+1).Replace('\\','/')).OrderBy(x=>x).ToArray();
   Guard.Require(actual.SequenceEqual(r.Files.Keys.OrderBy(x=>x)),"unexpected_release_file");
   foreach(var d in Directory.GetDirectories(r.Root,"*",SearchOption.AllDirectories)) Guard.Protected(d,c==null?null:c.WorkerSid);
@@ -155,7 +159,7 @@ public static class Host {
   try {
    if(op=="run_webcore_tests") return Job.Run(c.WorkerNodePath,r.Root,"--test",120000,temp);
    var watch=Stopwatch.StartNew();
-   foreach(var file in r.Files.Keys.Where(p=>p.StartsWith("server/")&&p.EndsWith(".js")).OrderBy(x=>x)) {
+   foreach(var file in r.Files.Keys.Where(p=>(p.StartsWith("server/")&&p.EndsWith(".js"))||p=="windows-readonly-launcher.cjs").OrderBy(x=>x)) {
     Guard.Require(watch.ElapsedMilliseconds<120000,"syntax_timeout");var result=Guard.Parse(Guard.Json.Serialize(Job.Run(c.WorkerNodePath,r.Root,"--check \""+file.Replace('/','\\')+"\"",15000,temp)));
     if(!(bool)result["ok"]) return result;
    }
@@ -183,7 +187,8 @@ public static class Host {
      Guard.Require(e.Length<=1000000&&(total+=checked((int)e.Length))<=10000000,"expanded_limit");var path=Path.Combine(root,relative.Replace('/',Path.DirectorySeparatorChar));Directory.CreateDirectory(Path.GetDirectoryName(path));e.ExtractToFile(path,false);
     } }
     var package=Guard.Parse(File.ReadAllText(Path.Combine(root,"package.json")));Guard.Require(!package.ContainsKey("dependencies")&&!package.ContainsKey("devDependencies"),"unsupported_dependencies");var scripts=package["scripts"] as System.Collections.Generic.Dictionary<string,object>;Guard.Require(scripts!=null&&Guard.Text(scripts,"test")=="node --test","unsupported_test_contract");
-    var release=new Release{Commit=r.Commit,Sha256=r.Sha256,Root=root,Version=Guard.Text(package,"version"),IsSnapshot=false,Files=Directory.GetFiles(root,"*",SearchOption.AllDirectories).ToDictionary(p=>p.Substring(root.Length+1).Replace('\\','/'),Guard.Hash)};
+    File.WriteAllText(Path.Combine(root,"windows-readonly-launcher.cjs"),LauncherText,new UTF8Encoding(false));
+    var release=new Release{Commit=r.Commit,Sha256=r.Sha256,Root=root,Version=Guard.Text(package,"version"),IsSnapshot=false,EntryPoint=c.ReleaseEntryPoint,Files=Directory.GetFiles(root,"*",SearchOption.AllDirectories).ToDictionary(p=>p.Substring(root.Length+1).Replace('\\','/'),Guard.Hash)};
     Guard.Write(Path.Combine(c.Root,"catalog",r.Commit+".json"),release);Verify(release);
     var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);
     Guard.Require((bool)syntax["ok"],"staged_syntax_failed");var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);
@@ -198,7 +203,7 @@ public static class Host {
  static object Cutover(Request r) {
   if(r.Operation=="deploy_release") RequireMerged(r.Commit);
   var s=GetState();Guard.Require(s.Recovery=="clean"&&s.Current.Sha256==r.ExpectedCurrentSha256,"stale_cutover");var target=Find(r.Commit,r.Sha256);
-  if(s.CommandRoot!=s.Current.Root) Verify(new Release{Commit=s.Current.Commit,Sha256=s.Current.Sha256,Root=s.CommandRoot,Files=s.Current.Files});
+  if(s.CommandRoot!=s.Current.Root) VerifyFiles(new Release{Commit=s.Current.Commit,Sha256=s.Current.Sha256,Root=s.CommandRoot,Files=s.Current.Files},false);
   var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)syntax["ok"],"cutover_syntax_failed");
   var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)tests["ok"],"cutover_tests_failed");
   Guard.Protected(c.TunnelExe);Guard.Require(Guard.Hash(c.TunnelExe)==c.TunnelExeSha256,"tunnel_integrity");
@@ -206,32 +211,43 @@ public static class Host {
   dynamic scheduler=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));scheduler.Connect();dynamic folder=scheduler.GetFolder("\\");dynamic task=folder.GetTask("SmartHome-WebCoRE-MCP");dynamic watchdog=folder.GetTask("SmartHome-WebCoRE-Watchdog");
   Guard.Require(Guard.Digest((string)task.Xml)==c.McpTaskXmlSha256&&Guard.Digest((string)watchdog.Xml)==c.WatchdogTaskXmlSha256,"task_drift");
   bool enabled=watchdog.Enabled;Guard.Require(enabled,"watchdog_disabled");
-  var old=File.ReadAllText(c.TunnelConfig,Encoding.UTF8);var from=s.CommandRoot+"\\server\\index.js";var to=target.Root+"\\server\\index.js";
-  // Installer normalizes only the source command representation and records it.
-  string fromEncoded=old.Contains(from)?from:from.Replace("\\","\\\\");string toEncoded=fromEncoded==from?to:to.Replace("\\","\\\\");
+  var old=File.ReadAllText(c.TunnelConfig,Encoding.UTF8);var fromEncoded=s.CommandText;
+  Guard.Require(!String.IsNullOrEmpty(fromEncoded)&&DecodePointer(fromEncoded)==ScriptPath(s.CommandRoot,s.Current),"command_binding");
+  var toEncoded=EncodePointer(ScriptPath(target.Root,target),s.CommandEncoding);
   Guard.Require(old.Split(new[]{fromEncoded},StringSplitOptions.None).Length==2,"ambiguous_release_pointer");
   var backup=Path.Combine(c.Root,"recovery","tunnel-before-"+r.Id+".yaml");File.Copy(c.TunnelConfig,backup,false);
   s.Recovery="cutover_in_progress";Save(s); // durable marker before first production mutation
   try {
    watchdog.Enabled=false;task.Stop(0);WaitTunnel(false);
-   if(r.Operation!="restart_mcp") AtomicText(c.TunnelConfig,old.Replace(fromEncoded,toEncoded));task.Run(null);WaitTunnel(true);VerifyRunningNode(r.Operation=="restart_mcp"?s.CommandRoot:target.Root);
+   if(r.Operation!="restart_mcp") AtomicText(c.TunnelConfig,old.Replace(fromEncoded,toEncoded));task.Run(null);WaitTunnel(true);VerifyRunningNode(r.Operation=="restart_mcp"?ScriptPath(s.CommandRoot,s.Current):ScriptPath(target.Root,target));
    // Process presence is a local gate; fresh ChatGPT end-to-end acceptance is separate.
-   var previous=s.Current;var updated=new State{Current=target,Previous=r.Operation=="restart_mcp"?s.Previous:previous,CommandRoot=r.Operation=="restart_mcp"?s.CommandRoot:target.Root,ConfigSha256=Guard.Hash(c.TunnelConfig),Recovery="clean"};Save(updated);
+   var previous=s.Current;var updated=new State{Current=target,Previous=r.Operation=="restart_mcp"?s.Previous:previous,CommandRoot=r.Operation=="restart_mcp"?s.CommandRoot:target.Root,CommandText=r.Operation=="restart_mcp"?s.CommandText:toEncoded,CommandEncoding=s.CommandEncoding,ConfigSha256=Guard.Hash(c.TunnelConfig),Recovery="clean"};Save(updated);
    return new { ok=true,currentCommit=target.Commit,localProcessVerified=true,endToEndVerified=false,rollbackCommit=r.Operation=="restart_mcp"?(s.Previous==null?null:s.Previous.Commit):s.Current.Commit };
   } catch {
-   try { task.Stop(0);WaitTunnel(false);AtomicText(c.TunnelConfig,old);task.Run(null);WaitTunnel(true);VerifyRunningNode(s.CommandRoot);s.Recovery="clean";s.ConfigSha256=Guard.Hash(c.TunnelConfig);Save(s); }
+   try { task.Stop(0);WaitTunnel(false);AtomicText(c.TunnelConfig,old);task.Run(null);WaitTunnel(true);VerifyRunningNode(ScriptPath(s.CommandRoot,s.Current));s.Recovery="clean";s.ConfigSha256=Guard.Hash(c.TunnelConfig);Save(s); }
    catch { s.Recovery="operator_recovery_required";Save(s); }
    throw;
   } finally { try{watchdog.Enabled=enabled;}catch{var recovery=GetState();recovery.Recovery="operator_recovery_required";Save(recovery);throw;} }
  }
- static void VerifyRunningNode(string releaseRoot) {
-  var script=releaseRoot+"\\server\\index.js";
+ public const string LauncherText="'use strict';\n\nprocess.env.WEBCORE_WINDOWS_MANAGEMENT_READONLY = 'enabled';\n\nrequire('./server/index.js');\n";
+ static string ScriptPath(string root,Release release) {
+  Guard.Require(release.EntryPoint=="server/index.js"||release.EntryPoint=="windows-readonly-launcher.cjs","unsupported_entry_point");
+  Guard.Require(release.Files.ContainsKey(release.EntryPoint),"missing_entry_point");return Path.Combine(root,release.EntryPoint.Replace('/','\\'));
+ }
+ public static string DecodePointer(string text) { return Path.GetFullPath(text.Replace("\\\\","\\").Replace('/','\\')); }
+ public static string EncodePointer(string path,string encoding) {
+  Guard.Full(path);if(encoding=="forward") return path.Replace('\\','/');if(encoding=="escaped") return path.Replace("\\","\\\\");Guard.Require(encoding=="backslash","unsupported_pointer_encoding");return path;
+ }
+ public static bool CommandMatches(string command,string script) {
+  if(command==null) return false;return new[]{script,script.Replace('\\','/')}.Distinct().Any(p=>command.EndsWith(" "+p,StringComparison.OrdinalIgnoreCase)||command.EndsWith("\""+p+"\"",StringComparison.OrdinalIgnoreCase));
+ }
+ static void VerifyRunningNode(string script) {
   for(int i=0;i<30;i++) {
    var tunnels=new List<int>();foreach(var candidate in Process.GetProcessesByName("tunnel-client")){using(candidate){try{if(String.Equals(Pipe.Image((uint)candidate.Id),c.TunnelExe,StringComparison.OrdinalIgnoreCase))tunnels.Add(candidate.Id);}catch{if(candidate.HasExited)continue;throw new InvalidOperationException("process_inspection");}}}Guard.Require(tunnels.Count==1,"tunnel_identity");
    using(var search=new ManagementObjectSearcher("SELECT ExecutablePath,CommandLine,ParentProcessId FROM Win32_Process WHERE Name='node.exe'")) {
     int matched=0;foreach(ManagementObject process in search.Get()) {
      var command=process["CommandLine"] as string;var image=process["ExecutablePath"] as string;
-     if(Convert.ToInt32(process["ParentProcessId"])==tunnels[0]&&String.Equals(image,c.NodePath,StringComparison.OrdinalIgnoreCase)&&command!=null&&(command.EndsWith(" "+script,StringComparison.OrdinalIgnoreCase)||command.EndsWith("\""+script+"\"",StringComparison.OrdinalIgnoreCase)))matched++;
+     if(Convert.ToInt32(process["ParentProcessId"])==tunnels[0]&&String.Equals(image,c.NodePath,StringComparison.OrdinalIgnoreCase)&&CommandMatches(command,script))matched++;
     }
     if(matched==1) return;Guard.Require(matched<=1,"duplicate_mcp");
    }Thread.Sleep(1000);

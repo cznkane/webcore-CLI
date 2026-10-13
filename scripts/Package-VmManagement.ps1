@@ -7,7 +7,7 @@ $source=Split-Path $PSScriptRoot -Parent
 if(Test-Path -LiteralPath $OutputDirectory){Remove-Item -LiteralPath $OutputDirectory -Recurse -Force}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
 foreach($dir in @('server','test','.codex-plugin','docs')){Copy-Item -LiteralPath (Join-Path $source $dir) -Destination $OutputDirectory -Recurse}
-foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $source $file) -Destination $OutputDirectory}
+foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json','windows-readonly-launcher.cjs')){Copy-Item -LiteralPath (Join-Path $source $file) -Destination $OutputDirectory}
 New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'scripts')|Out-Null
 foreach($script in @('Install-VmManagement.ps1','VmWorkerRights.ps1','Remove-WorkerProfile.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (Join-Path $OutputDirectory 'scripts')}
 New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'bin')|Out-Null
