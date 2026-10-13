@@ -1,0 +1,33 @@
+name: Windows VM worker prototype validation
+
+on:
+  push:
+    branches:
+      - feature/allowlisted-vm-tests
+  pull_request:
+    paths:
+      - 'server/vm-*.js'
+      - 'test/vm-*.test.js'
+      - '.github/workflows/windows-vm-worker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-worker:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install dependencies
+        run: npm ci
+      - name: Syntax-check VM worker modules
+        shell: pwsh
+        run: |
+          Get-ChildItem server/vm-*.js | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
+      - name: Run VM worker tests on Windows
+        run: node --test test/vm-approval-ledger.test.js test/vm-release-integrity.test.js test/vm-worker-audit.test.js test/vm-worker-concurrency.test.js test/vm-worker-policy.test.js test/vm-worker-process.test.js
