@@ -6,7 +6,7 @@ import { win32 } from 'node:path';
 // isolation remain mandatory before any real worker is commissioned.
 export async function runFixedNodeOperation({ executable, args, cwd, timeoutMs = 30000 }, { spawnProcess = spawn } = {}) {
   if (typeof executable !== 'string' || !/^(?:[A-Za-z]:\\\\[^\r\n"]+\\\\)?node\.exe$/i.test(executable)) {
-    throw new Error('Only a pinned Node executable is permitted.');
+  if (typeof executable !== 'string' || !win32.isAbsolute(executable) || !/^[A-Za-z]:/.test(executable) || win32.basename(executable).toLowerCase() !== 'node.exe' || executable.includes('"') || executable.includes(String.fromCharCode(10)) || executable.includes(String.fromCharCode(13))) {
   }
   const validArgs = Array.isArray(args) && (
     (args.length === 1 && args[0] === '--test') ||
