@@ -57,6 +57,9 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  Assert ($approved.status-eq 'consumed') 'approval consumed before execution'
  $replay=Invoke-Operator @{action='approve';requestId=$request.requestId};Assert ($replay.ok-eq $false) 'approval replay rejected'
  $completed=Await-Request $request.requestId
+ Write-Output ('Restricted worker result: '+($completed|ConvertTo-Json -Compress -Depth 8))
+ if(Test-Path "$root\scratch\worker-startup-error.json"){Get-Content "$root\scratch\worker-startup-error.json"|Write-Output}
+ Get-ScheduledTaskInfo -TaskName 'SmartHome-WebCoRE-Worker'|Select-Object LastTaskResult|ConvertTo-Json -Compress|Write-Output
  Assert ($completed.status-eq 'succeeded' -and $completed.result.exitCode-eq 0) 'real restricted-worker syntax execution'
  # Wrong executable cannot use the independent operator channel even with the correct SID.
  $pipe=[IO.Pipes.NamedPipeClientStream]::new('.','SmartHome-WebCoRE-Approval',[IO.Pipes.PipeDirection]::InOut,[IO.Pipes.PipeOptions]::None,[Security.Principal.TokenImpersonationLevel]::Identification)

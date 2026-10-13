@@ -55,7 +55,7 @@ public static class Host {
    }
    if(args[0]=="worker") { Guard.Require(WindowsIdentity.GetCurrent().User.Value==c.WorkerSid&&!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator),"restricted_worker_required");Serve(WorkerPipe,"S-1-5-18",false,true);return 0; }
    throw new InvalidOperationException("unknown_mode");
-  } catch(Exception failure) { Console.Error.WriteLine("VM management failed closed: "+(Regex.IsMatch(failure.Message,@"\A[a-z_]{1,64}\z")?failure.Message:"boundary_failure"));return 2; }
+  } catch(Exception failure) { var code=Regex.IsMatch(failure.Message,@"\A[a-z_]{1,64}\z")?failure.Message:"boundary_failure";Console.Error.WriteLine("VM management failed closed: "+code);if(args.Length==1&&args[0]=="worker"&&c!=null){try{Guard.Write(Path.Combine(c.Root,"scratch","worker-startup-error.json"),new{error=code});}catch{}}return 2; }
  }
  static string ReadInput() { var b=new char[4097];int n=0,k;while(n<b.Length&&(k=Console.In.Read(b,n,b.Length-n))>0) n+=k;Guard.Require(n<=4096,"request_limit");return new string(b,0,n); }
  static void Serve(string name,string sid,bool op,bool worker) {
