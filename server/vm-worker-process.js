@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { win32 } from 'node:path';
+import { syntaxCheckFiles } from './vm-worker-syntax-plan.js';
 
 // Inert helper for a future restricted worker. Never invoke this from the
 // privileged MCP service. Windows Job Object enforcement and identity
@@ -11,7 +12,7 @@ export async function runFixedNodeOperation({ executable, args, cwd, timeoutMs =
   if (typeof expectedExecutable !== 'string' || executable !== expectedExecutable) throw new Error('Trusted Node executable identity required.');
   const validArgs = Array.isArray(args) && (
     (args.length === 1 && args[0] === '--test') ||
-    (args.length === 2 && args[0] === '--check' && args[1] === 'server/index.js')
+    (args.length === 2 && args[0] === '--check' && syntaxCheckFiles.includes(args[1]))
   );
   if (!validArgs) throw new Error('Unapproved Node arguments.');
   if (typeof cwd !== 'string' || !win32.isAbsolute(cwd) || !/^[A-Za-z]:/.test(cwd) || cwd.includes('"') || cwd.includes(String.fromCharCode(10)) || cwd.includes(String.fromCharCode(13))) throw new Error('Absolute Windows working directory required.');
