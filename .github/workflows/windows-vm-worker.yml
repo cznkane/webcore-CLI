@@ -28,4 +28,4 @@ jobs:
         run: |
           Get-ChildItem server/vm-*.js | ForEach-Object { node --check $_.FullName; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE } }
       - name: Run VM worker tests on Windows
-        run: node --test test/vm-approval-ledger.test.js test/vm-release-integrity.test.js test/vm-worker-audit.test.js test/vm-worker-concurrency.test.js test/vm-worker-policy.test.js test/vm-worker-process.test.js
+        run: node --test test/vm-approval-ledger.test.js test/vm-release-integrity.test.js test/vm-worker-audit.test.js test/vm-worker-concurrency.test.js test/vm-worker-policy.test.js test/vm-worker-process.test.js test/vm-worker-config.test.js
