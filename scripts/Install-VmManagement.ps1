@@ -38,8 +38,8 @@ function Assert-Protected([string]$Path,[string]$ReaderSid){
  $acl=Get-Acl -LiteralPath $Path
  $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
  if($owner -notin @('S-1-5-18','S-1-5-32-544')){throw 'Untrusted file owner'}
- $write=[Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
- foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw 'Unprotected management input'}}}
+ $write=([int][Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 1073741824 -bor 268435456
+ foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw ('Unprotected management input: '+$Path)}}}
 }
 function Assert-ImmutableParents([string]$Path){
  $cursor=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
@@ -54,7 +54,7 @@ function Assert-ImmutableParents([string]$Path){
 function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
  if(-not $RuntimeRoot.StartsWith('C:\SmartHome\',[StringComparison]::OrdinalIgnoreCase) -or -not $TunnelExecutable.StartsWith('C:\SmartHome\',[StringComparison]::OrdinalIgnoreCase)){throw 'Hardening scope requires existing C:\SmartHome runtime'}
  $trusted=@('S-1-5-18','S-1-5-32-544')
- $write=[Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
+ $write=([int][Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 1073741824 -bor 268435456
  $danger=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
  $scope=@($RuntimeRoot)+@(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -Force | ForEach-Object FullName)+@($TunnelExecutable)
  $parents=@()
@@ -79,24 +79,34 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
     (-not $target -and ($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and ($_.FileSystemRights -band $danger) -ne 0))
   }).Count -gt 0
   if(-not $needsChange){continue}
-  $acl.SetAccessRuleProtection($true,$true)
-  foreach($ace in @($acl.Access)){
-   $sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
-   if($ace.AccessControlType -ne 'Allow' -or $sid -in $trusted){continue}
-   if($target){
-    if(($ace.FileSystemRights -band $write) -eq 0){continue}
-    $acl.RemoveAccessRuleSpecific($ace)
-    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($ace.IdentityReference,'ReadAndExecute',$ace.InheritanceFlags,$ace.PropagationFlags,'Allow'))
-   }elseif(($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and ($ace.FileSystemRights -band $danger) -ne 0){
-    # Parent change applies only to this directory. Preserve inherited permissions of unrelated children.
-    $acl.RemoveAccessRuleSpecific($ace)
-    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($ace.IdentityReference,'ReadAndExecute','None','None','Allow'))
-    if($ace.InheritanceFlags -ne [Security.AccessControl.InheritanceFlags]::None){
-     $flags=$ace.PropagationFlags -bor [Security.AccessControl.PropagationFlags]::InheritOnly
-     $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($ace.IdentityReference,$ace.FileSystemRights,$ace.InheritanceFlags,$flags,'Allow'))
+  if(@($acl.Access | Where-Object AccessControlType -eq 'Deny').Count){throw 'Existing deny permissions require a reviewed hardening plan'}
+  # Rewrite a complete DACL: inherited ACEs cannot be reliably removed in memory before persistence.
+  $sections=[Security.AccessControl.AccessControlSections]'Owner,Group,Access'
+  $raw=[Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorSddlForm($sections))
+  $rewritten=[Security.AccessControl.RawAcl]::new($raw.DiscretionaryAcl.Revision,$raw.DiscretionaryAcl.Count*2)
+  foreach($ace in $raw.DiscretionaryAcl){
+   $ace.AceFlags=$ace.AceFlags -band (-bnot [Security.AccessControl.AceFlags]::Inherited)
+   $qualified=$ace -is [Security.AccessControl.QualifiedAce]
+   $foreign=$qualified -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $ace.SecurityIdentifier.Value -notin $trusted
+   if($target -and $foreign -and ($ace.AccessMask -band $write) -ne 0){
+    $ace.AccessMask=[int][Security.AccessControl.FileSystemRights]'ReadAndExecute,Synchronize'
+   }elseif(-not $target -and $foreign -and ($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and ($ace.AccessMask -band $danger) -ne 0){
+    # Keep the original writer mask for unrelated descendants, but remove replacement rights on this parent.
+    $inheritMask=[Security.AccessControl.AceFlags]'ContainerInherit,ObjectInherit'
+    if(($ace.AceFlags -band $inheritMask) -ne 0){
+     $bytes=New-Object byte[] $ace.BinaryLength;$ace.GetBinaryForm($bytes,0)
+     $childAce=[Security.AccessControl.GenericAce]::CreateFromBinaryForm($bytes,0)
+     $childAce.AceFlags=$childAce.AceFlags -bor [Security.AccessControl.AceFlags]::InheritOnly
+     $rewritten.InsertAce($rewritten.Count,$childAce)
     }
+    $ace.AceFlags=[Security.AccessControl.AceFlags]::None
+    $ace.AccessMask=[int][Security.AccessControl.FileSystemRights]'ReadAndExecute,Synchronize'
    }
+   $rewritten.InsertAce($rewritten.Count,$ace)
   }
+  $raw.DiscretionaryAcl=$rewritten
+  $raw.SetFlags($raw.ControlFlags -bor [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected)
+  $acl.SetSecurityDescriptorSddlForm($raw.GetSddlForm($sections),$sections)
   $plans+=@{Path=$path;Acl=$acl;Target=$target}
  }
  $backupPath=Join-Path (Split-Path $PackageRoot -Parent) ('runtime-acl-before-'+[Guid]::NewGuid().ToString('N')+'.json')

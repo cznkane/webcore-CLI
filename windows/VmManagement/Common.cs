@@ -35,7 +35,7 @@ public static class Guard {
    if(r.AccessControlType!=AccessControlType.Allow) continue;
    var sid=((SecurityIdentifier)r.IdentityReference).Value;
    if(sid=="S-1-5-18"||sid=="S-1-5-32-544") continue;
-   var write=FileSystemRights.Write|FileSystemRights.Delete|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership|FileSystemRights.DeleteSubdirectoriesAndFiles;
+   var write=FileSystemRights.Write|FileSystemRights.Delete|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership|FileSystemRights.DeleteSubdirectoriesAndFiles|(FileSystemRights)0x40000000|(FileSystemRights)0x10000000;
    Require((r.FileSystemRights&write)==0,"mutable_path");
    Require(publicRead||(readerSid!=null&&sid==readerSid),"unexpected_reader");
   }

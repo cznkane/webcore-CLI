@@ -70,7 +70,7 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  & "$PSScriptRoot\Package-VmManagement.ps1" -Commit ('a'*40)
  Copy-Item -LiteralPath (Join-Path $source 'build\package') -Destination $package -Recurse
  $insecureRejected=$false
- try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node}catch{$insecureRejected=$_.Exception.Message -eq 'Unprotected management input'}
+ try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node}catch{$insecureRejected=$_.Exception.Message.StartsWith('Unprotected management input')}
  Assert $insecureRejected 'foreign runtime writers rejected before installation'
  $tunnelPidBefore=@(Get-Process tunnel-client)[0].Id
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node
