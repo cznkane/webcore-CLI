@@ -81,7 +81,7 @@ function Snapshot([string]$Source,[string]$Commit,[string]$EntryPoint,[switch]$I
  New-Item -ItemType Directory -Path $destination | Out-Null
  foreach($directory in @('server','test','.codex-plugin')){if(Test-Path -LiteralPath (Join-Path $Source $directory)){Get-ChildItem -LiteralPath (Join-Path $Source $directory) -Recurse -Force | ForEach-Object{Assert-NoReparse $_.FullName};Copy-Item -LiteralPath (Join-Path $Source $directory) -Destination $destination -Recurse}}
  foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $Source $file) -Destination $destination}
- if($EntryPoint -eq 'windows-readonly-launcher.cjs'){Copy-Item -LiteralPath (Join-Path $Source $EntryPoint) -Destination $destination}
+ if(Test-Path -LiteralPath (Join-Path $Source 'windows-readonly-launcher.cjs')){Copy-Item -LiteralPath (Join-Path $Source 'windows-readonly-launcher.cjs') -Destination $destination}
  Protect $destination $script:WorkerSid
  $files=[ordered]@{}
  Get-ChildItem -LiteralPath $destination -Recurse -File | Sort-Object FullName | ForEach-Object{$files[$_.FullName.Substring($destination.Length+1).Replace('\','/')]=Hash $_.FullName}
@@ -207,7 +207,7 @@ if($entryPoint -eq 'windows-readonly-launcher.cjs'){
  # Only the reviewed, fixed environment-enabling wrapper is supported, never arbitrary code.
  $wrapper=[IO.File]::ReadAllText($commandPath)
  $contract='\A\s*''use strict'';\s*process\.env\.WEBCORE_WINDOWS_MANAGEMENT_READONLY\s*=\s*''enabled'';\s*require\(''\./server/index\.js''\);\s*\z'
- if($wrapper -notmatch $contract){throw 'Unsupported launcher content; preserve runtime and review it'}
+ if($wrapper -cnotmatch $contract){throw 'Unsupported launcher content; preserve runtime and review it'}
 }
 if(-not(Test-Path -LiteralPath (Join-Path $originalRoot 'package.json'))){throw 'Current runtime package missing'}
 # Prove the currently running tunnel child matches the selected script before provisioning.

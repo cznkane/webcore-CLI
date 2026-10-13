@@ -28,7 +28,7 @@ try{
  foreach($dir in @('server','test','.codex-plugin')){Copy-Item -LiteralPath (Join-Path $source $dir) -Destination $payload -Recurse}
  foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $source $file) -Destination $payload}
  $entryPoint=if($Layout -eq 'wrapper'){'windows-readonly-launcher.cjs'}else{'server/index.js'}
- if($Layout -eq 'wrapper'){Copy-Item -LiteralPath (Join-Path $source $entryPoint) -Destination $payload}
+ Copy-Item -LiteralPath (Join-Path $source 'windows-readonly-launcher.cjs') -Destination $payload
  # Non-runtime residue must not defeat protected source-file verification.
  [IO.File]::WriteAllText((Join-Path $payload 'retained-readme.txt'),'fixture residue')
  $node=Join-Path $fixture 'node.exe';Copy-Item -LiteralPath (Get-Command node.exe).Source -Destination $node

@@ -185,7 +185,7 @@ public static class Host {
      Guard.Require(e.Length<=1000000&&(total+=checked((int)e.Length))<=10000000,"expanded_limit");var path=Path.Combine(root,relative.Replace('/',Path.DirectorySeparatorChar));Directory.CreateDirectory(Path.GetDirectoryName(path));e.ExtractToFile(path,false);
     } }
     var package=Guard.Parse(File.ReadAllText(Path.Combine(root,"package.json")));Guard.Require(!package.ContainsKey("dependencies")&&!package.ContainsKey("devDependencies"),"unsupported_dependencies");var scripts=package["scripts"] as System.Collections.Generic.Dictionary<string,object>;Guard.Require(scripts!=null&&Guard.Text(scripts,"test")=="node --test","unsupported_test_contract");
-    if(c.ReleaseEntryPoint=="windows-readonly-launcher.cjs") File.WriteAllText(Path.Combine(root,c.ReleaseEntryPoint),LauncherText,new UTF8Encoding(false));
+    File.WriteAllText(Path.Combine(root,"windows-readonly-launcher.cjs"),LauncherText,new UTF8Encoding(false));
     var release=new Release{Commit=r.Commit,Sha256=r.Sha256,Root=root,Version=Guard.Text(package,"version"),IsSnapshot=false,EntryPoint=c.ReleaseEntryPoint,Files=Directory.GetFiles(root,"*",SearchOption.AllDirectories).ToDictionary(p=>p.Substring(root.Length+1).Replace('\\','/'),Guard.Hash)};
     Guard.Write(Path.Combine(c.Root,"catalog",r.Commit+".json"),release);Verify(release);
     var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);
