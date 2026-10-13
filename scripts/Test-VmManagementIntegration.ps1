@@ -9,6 +9,7 @@ $source=Split-Path $PSScriptRoot -Parent
 $root='C:\ProgramData\SmartHome\VmManagement'
 $fixture='C:\SmartHome\VmManagementFixture'
 $webcore='C:\ProgramData\SmartHome\WebCoRE'
+$package='C:\ProgramData\SmartHome\VmManagementFixturePackage'
 $createdTasks=@()
 function Assert($Condition,[string]$Name){if(-not $Condition){throw "FAIL: $Name"};Write-Output "PASS: $Name"}
 function Secure([string]$Path){
@@ -50,11 +51,33 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  Register-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP' -Action (New-ScheduledTaskAction -Execute (Join-Path $fixture 'tunnel-client.exe') -Argument "--config $yaml") -Trigger $trigger -Settings $settings -Principal $principal|Out-Null;$createdTasks+='SmartHome-WebCoRE-MCP'
  Register-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog' -Action (New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument '-NoProfile -NonInteractive -Command exit') -Trigger $trigger -Settings $settings -Principal $principal|Out-Null;$createdTasks+='SmartHome-WebCoRE-Watchdog'
  Start-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP';Start-Sleep -Seconds 2
+ $runtimeAcl=Get-Acl $payload
+ $runtimeAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'Modify','ContainerInherit,ObjectInherit','None','Allow'))
+ Set-Acl $payload $runtimeAcl
+ foreach($publicExe in @($node,(Join-Path $fixture 'tunnel-client.exe'))){
+  $acl=Get-Acl $publicExe;$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'ReadAndExecute','Allow'));Set-Acl $publicExe $acl
+ }
+ # Parent permits replacement of protected descendants, while sibling permissions must remain unchanged.
+ $sibling=Join-Path $fixture 'unrelated';New-Item -ItemType Directory -Path $sibling|Out-Null
+ $parentAcl=Get-Acl $fixture;$parentAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'Modify','ContainerInherit,ObjectInherit','None','Allow'));Set-Acl $fixture $parentAcl
+ $siblingAclBefore=(Get-Acl $sibling).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+
  $parserErrors=$null;$tokens=$null
  [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Install-VmManagement.ps1'),[ref]$tokens,[ref]$parserErrors)|Out-Null
  Assert ($parserErrors.Count-eq 0) 'PowerShell installer syntax'
  & "$PSScriptRoot\Package-VmManagement.ps1" -Commit ('a'*40)
- $package=Join-Path $fixture 'package';Copy-Item -LiteralPath (Join-Path $source 'build\package') -Destination $package -Recurse
+ Copy-Item -LiteralPath (Join-Path $source 'build\package') -Destination $package -Recurse
+ $insecureRejected=$false
+ try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node}catch{$insecureRejected=$_.Exception.Message -eq 'Unprotected management input'}
+ Assert $insecureRejected 'foreign runtime writers rejected before installation'
+ $tunnelPidBefore=@(Get-Process tunnel-client)[0].Id
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node
+ Assert (@(Get-Process tunnel-client)[0].Id -eq $tunnelPidBefore) 'permission hardening does not restart service'
+ Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'permission hardening preserves exact configuration bytes'
+ Assert ((Get-Acl $sibling).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) -eq $siblingAclBefore) 'unrelated sibling permissions preserved'
+ Assert (@(Get-ChildItem (Split-Path $package -Parent) -Filter 'runtime-acl-before-*.json').Count -eq 1) 'protected permission backup retained'
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node
+ Assert (@(Get-Process tunnel-client)[0].Id -eq $tunnelPidBefore) 'permission hardening is idempotent and preserves process'
  $wrongConfigRejected=$false
  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node -TunnelConfigPath $decoy}catch{$wrongConfigRejected=$_.Exception.Message -eq 'Supplied configuration differs from active task'}
  Assert $wrongConfigRejected 'stale backup cannot be substituted for active configuration'
@@ -168,5 +191,6 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  Get-Process tunnel-client -ErrorAction SilentlyContinue|Stop-Process -Force
  Remove-NetFirewallRule -Name 'SmartHome-WebCoRE-Worker-NetworkDeny' -ErrorAction SilentlyContinue
  Remove-LocalUser -Name 'SmartHomeVmWorker' -ErrorAction SilentlyContinue
- foreach($dir in @($root,$fixture,$webcore)){if(Test-Path $dir){Remove-Item -LiteralPath $dir -Recurse -Force}}
+ foreach($backup in @(Get-ChildItem 'C:\ProgramData\SmartHome' -Filter 'runtime-acl-before-*.json' -ErrorAction SilentlyContinue)){Remove-Item -LiteralPath $backup.FullName -Force}
+ foreach($dir in @($root,$fixture,$webcore,$package)){if(Test-Path $dir){Remove-Item -LiteralPath $dir -Recurse -Force}}
 }

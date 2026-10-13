@@ -86,8 +86,8 @@ public static class Host {
  }
  public static void Verify(Release r) { VerifyFiles(r,true); }
  static void VerifyFiles(Release r,bool exact) {
-  Guard.Require(r!=null&&r.Files!=null&&r.Files.Count>0&&r.Files.Count<=2048,"invalid_manifest");Guard.Protected(r.Root,c==null?null:c.WorkerSid);
-  foreach(var entry in r.Files) { Guard.Require(!String.IsNullOrEmpty(entry.Key)&&entry.Key.Split('/').All(part=>part!="."&&part!=".."&&part.Length>0)&&!entry.Key.Contains("\\")&&!entry.Key.Contains(":"),"manifest_path");var p=Path.Combine(r.Root,entry.Key.Replace('/',Path.DirectorySeparatorChar));Guard.Protected(p,c==null?null:c.WorkerSid);Guard.Require(Guard.Hash(p)==entry.Value,"release_integrity"); }
+  Guard.Require(r!=null&&r.Files!=null&&r.Files.Count>0&&r.Files.Count<=2048,"invalid_manifest");if(exact) Guard.Protected(r.Root,c==null?null:c.WorkerSid);else Guard.ProtectedRuntime(r.Root);
+  foreach(var entry in r.Files) { Guard.Require(!String.IsNullOrEmpty(entry.Key)&&entry.Key.Split('/').All(part=>part!="."&&part!=".."&&part.Length>0)&&!entry.Key.Contains("\\")&&!entry.Key.Contains(":"),"manifest_path");var p=Path.Combine(r.Root,entry.Key.Replace('/',Path.DirectorySeparatorChar));if(exact) Guard.Protected(p,c==null?null:c.WorkerSid);else Guard.ProtectedRuntime(p);Guard.Require(Guard.Hash(p)==entry.Value,"release_integrity"); }
   if(!exact) return;
   var actual=Directory.GetFiles(r.Root,"*",SearchOption.AllDirectories).Select(p=>p.Substring(r.Root.Length+1).Replace('\\','/')).OrderBy(x=>x).ToArray();
   Guard.Require(actual.SequenceEqual(r.Files.Keys.OrderBy(x=>x)),"unexpected_release_file");
@@ -206,8 +206,8 @@ public static class Host {
   if(s.CommandRoot!=s.Current.Root) VerifyFiles(new Release{Commit=s.Current.Commit,Sha256=s.Current.Sha256,Root=s.CommandRoot,Files=s.Current.Files},false);
   var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)syntax["ok"],"cutover_syntax_failed");
   var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)tests["ok"],"cutover_tests_failed");
-  Guard.Protected(c.TunnelExe);Guard.Require(Guard.Hash(c.TunnelExe)==c.TunnelExeSha256,"tunnel_integrity");
-  Guard.Protected(c.TunnelConfig);Guard.Protected(c.NodePath);Guard.Require(Guard.Hash(c.NodePath)==c.NodeSha256&&Guard.Hash(c.TunnelConfig)==s.ConfigSha256,"configuration_drift");
+  Guard.ProtectedRuntime(c.TunnelExe);Guard.Require(Guard.Hash(c.TunnelExe)==c.TunnelExeSha256,"tunnel_integrity");
+  Guard.Protected(c.TunnelConfig);Guard.ProtectedRuntime(c.NodePath);Guard.Require(Guard.Hash(c.NodePath)==c.NodeSha256&&Guard.Hash(c.TunnelConfig)==s.ConfigSha256,"configuration_drift");
   dynamic scheduler=Activator.CreateInstance(Type.GetTypeFromProgID("Schedule.Service"));scheduler.Connect();dynamic folder=scheduler.GetFolder("\\");dynamic task=folder.GetTask("SmartHome-WebCoRE-MCP");dynamic watchdog=folder.GetTask("SmartHome-WebCoRE-Watchdog");
   Guard.Require(Guard.Digest((string)task.Xml)==c.McpTaskXmlSha256&&Guard.Digest((string)watchdog.Xml)==c.WatchdogTaskXmlSha256,"task_drift");
   bool enabled=watchdog.Enabled;Guard.Require(enabled,"watchdog_disabled");
