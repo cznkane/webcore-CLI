@@ -132,7 +132,7 @@ public static class Host {
    var json=Guard.Parse(Guard.Json.Serialize(result));bool ok=json.ContainsKey("ok")&&json["ok"] is bool&&(bool)json["ok"];
    Guard.Audit(c.Root,r.Id,r.Operation,ok?"succeeded":"failed",r.Sha256);
    lock(sync) { r.Status=ok?"succeeded":"failed";r.Result=result; }
-  } catch { try { Guard.Audit(c.Root,r.Id,r.Operation,"failed",r.Sha256); } catch {} lock(sync) { r.Status="failed";r.Result=new { ok=false,error="operation_failed_inspect_recovery" }; } }
+  } catch(Exception failure) { try { Guard.Audit(c.Root,r.Id,r.Operation,"failed",r.Sha256); } catch {} lock(sync) { r.Status="failed";r.Result=new { ok=false,error=Regex.IsMatch(failure.Message,@"\A[a-z_]{1,64}\z")?failure.Message:"operation_failed_inspect_recovery" }; } }
   finally { lock(sync) busy=false; }
  }
  static object Work(Dictionary<string,object> m) {
@@ -184,6 +184,7 @@ public static class Host {
  static object Cutover(Request r) {
   if(r.Operation=="deploy_release") RequireMerged(r.Commit);
   var s=GetState();Guard.Require(s.Recovery=="clean"&&s.Current.Sha256==r.ExpectedCurrentSha256,"stale_cutover");var target=Find(r.Commit,r.Sha256);
+  var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)syntax["ok"],"cutover_syntax_failed");
   var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);Guard.Require((bool)tests["ok"],"cutover_tests_failed");
   Guard.Protected(c.TunnelExe);Guard.Require(Guard.Hash(c.TunnelExe)==c.TunnelExeSha256,"tunnel_integrity");
   Guard.Protected(c.TunnelConfig);Guard.Protected(c.NodePath);Guard.Require(Guard.Hash(c.NodePath)==c.NodeSha256&&Guard.Hash(c.TunnelConfig)==s.ConfigSha256,"configuration_drift");
@@ -198,9 +199,9 @@ public static class Host {
   s.Recovery="cutover_in_progress";Save(s); // durable marker before first production mutation
   try {
    watchdog.Enabled=false;task.Stop(0);WaitTunnel(false);
-   AtomicText(c.TunnelConfig,old.Replace(fromEncoded,toEncoded));task.Run(null);WaitTunnel(true);VerifyRunningNode(target);
+   if(r.Operation!="restart_mcp") AtomicText(c.TunnelConfig,old.Replace(fromEncoded,toEncoded));task.Run(null);WaitTunnel(true);VerifyRunningNode(r.Operation=="restart_mcp"?s.CommandRoot:target.Root);
    // Process presence is a local gate; fresh ChatGPT end-to-end acceptance is separate.
-   var previous=s.Current;var updated=new State{Current=target,Previous=r.Operation=="restart_mcp"?s.Previous:previous,CommandRoot=target.Root,ConfigSha256=Guard.Hash(c.TunnelConfig),Recovery="clean"};Save(updated);
+   var previous=s.Current;var updated=new State{Current=target,Previous=r.Operation=="restart_mcp"?s.Previous:previous,CommandRoot=r.Operation=="restart_mcp"?s.CommandRoot:target.Root,ConfigSha256=Guard.Hash(c.TunnelConfig),Recovery="clean"};Save(updated);
    return new { ok=true,currentCommit=target.Commit,localProcessVerified=true,endToEndVerified=false,rollbackCommit=r.Operation=="restart_mcp"?(s.Previous==null?null:s.Previous.Commit):s.Current.Commit };
   } catch {
    try { task.Stop(0);WaitTunnel(false);AtomicText(c.TunnelConfig,old);task.Run(null);WaitTunnel(true);s.Recovery="clean";s.ConfigSha256=Guard.Hash(c.TunnelConfig);Save(s); }
@@ -208,8 +209,8 @@ public static class Host {
    throw;
   } finally { watchdog.Enabled=enabled; }
  }
- static void VerifyRunningNode(Release target) {
-  var script=target.Root+"\\server\\index.js";
+ static void VerifyRunningNode(string releaseRoot) {
+  var script=releaseRoot+"\\server\\index.js";
   for(int i=0;i<30;i++) {
    var tunnels=Process.GetProcessesByName("tunnel-client").Where(p=>String.Equals(p.MainModule.FileName,c.TunnelExe,StringComparison.OrdinalIgnoreCase)).Select(p=>p.Id).ToArray();Guard.Require(tunnels.Length==1,"tunnel_identity");
    using(var search=new ManagementObjectSearcher("SELECT ExecutablePath,CommandLine,ParentProcessId FROM Win32_Process WHERE Name='node.exe'")) {

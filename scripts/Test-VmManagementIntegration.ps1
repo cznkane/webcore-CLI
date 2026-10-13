@@ -27,7 +27,11 @@ try{
  foreach($dir in @('server','test','.codex-plugin')){Copy-Item -LiteralPath (Join-Path $source $dir) -Destination $payload -Recurse}
  foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $source $file) -Destination $payload}
  $node=Join-Path $fixture 'node.exe';Copy-Item -LiteralPath (Get-Command node.exe).Source -Destination $node
- Add-Type -TypeDefinition 'using System;using System.Threading;public class FixtureTunnel{public static void Main(){while(true)Thread.Sleep(1000);}}' -OutputAssembly (Join-Path $fixture 'tunnel-client.exe') -OutputType ConsoleApplication
+ $fixtureSource=@'
+using System;using System.Threading;using System.IO;using System.Diagnostics;using System.Text.RegularExpressions;
+public class FixtureTunnel{public static void Main(string[] args){var text=File.ReadAllText(args[1]).Replace("\\\\","\\");var match=Regex.Match(text,@"[A-Za-z]:\\[^'\r\n]*?\\server\\index\.js");var psi=new ProcessStartInfo{FileName=@"C:\SmartHome\VmManagementFixture\node.exe",Arguments="\""+match.Value+"\"",UseShellExecute=false,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};var child=Process.Start(psi);child.OutputDataReceived+=(s,e)=>{};child.ErrorDataReceived+=(s,e)=>{};child.BeginOutputReadLine();child.BeginErrorReadLine();while(true)Thread.Sleep(1000);}}
+'@
+ Add-Type -TypeDefinition $fixtureSource -OutputAssembly (Join-Path $fixture 'tunnel-client.exe') -OutputType ConsoleApplication
  $yaml=Join-Path $webcore 'fixture.yaml';[IO.File]::WriteAllText($yaml,"mcp:`n  commands:`n    - command: 'node $payload\server\index.js'`n",[Text.UTF8Encoding]::new($false))
  $principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
  $settings=New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
@@ -74,10 +78,30 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  Assert ($completed.status-eq 'succeeded') 'actual worker denied protected read and immutable write'
  $childPid=[int](Get-Content "$root\scratch\child-pid.txt")
  Assert (-not(Get-Process -Id $childPid -ErrorAction SilentlyContinue)) 'Job Object killed detached descendant on normal exit'
+ $scope.operation='restart_mcp';$scope.commit=$state.Current.Commit;$scope.sha256=$state.Current.Sha256
+ $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
+ Assert ($completed.status-eq 'succeeded') ("controlled service restart: "+($completed.result|ConvertTo-Json -Compress))
+ Assert ((Get-Content $yaml -Raw).Contains($payload)) 'restart preserved release pointer'
+ $main=Invoke-RestMethod -Uri 'https://api.github.com/repos/cznkane/webcore-CLI/branches/main' -Headers @{'User-Agent'='SmartHome-CI'}
+ $commit=[string]$main.commit.sha;$archive=Join-Path $fixture 'merged-release.zip'
+ Invoke-WebRequest -UseBasicParsing -Uri "https://codeload.github.com/cznkane/webcore-CLI/zip/$commit" -OutFile $archive
+ $digest=(Get-FileHash $archive).Hash.ToLowerInvariant()
+ $scope.operation='stage_release';$scope.commit=$commit;$scope.sha256=$digest
+ $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
+ Assert ($completed.status-eq 'succeeded') ("merged pinned archive staging: "+($completed.result|ConvertTo-Json -Compress))
+ $scope.operation='deploy_release';$request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
+ Assert ($completed.status-eq 'succeeded') ("controlled release deployment: "+($completed.result|ConvertTo-Json -Compress))
+ Assert ((Get-Content $yaml -Raw).Contains($commit)) 'deployed pointer persistence'
+ $scope.operation='rollback_release';$scope.commit=$state.Current.Commit;$scope.sha256=$state.Current.Sha256;$scope.expectedCurrentSha256=$digest
+ $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
+ Assert ($completed.status-eq 'succeeded') ("verified prior-release rollback: "+($completed.result|ConvertTo-Json -Compress))
+ Assert ((Get-Content $yaml -Raw).Contains($state.Current.Commit)) 'rollback pointer persistence'
  $scope.expectedCurrentSha256='e'*64;$stale=Invoke-Operator $scope;Assert ($stale.ok-eq $false) 'stale release approval rejected'
  $events=@(Get-ChildItem "$root\audit\*.jsonl"|Get-Content|ForEach-Object{$_|ConvertFrom-Json})
  Assert (@($events|Where-Object outcome -eq 'succeeded').Count-ge 2) 'durable outcomes recorded'
  Assert (-not((Get-ChildItem "$root\audit\*.jsonl"|Get-Content)-match 'fixture-canary|stdout|password|command:')) 'audit contains metadata only'
+ & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover
+ Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall
  Assert (-not(Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Management' -ErrorAction SilentlyContinue)) 'uninstall removed only management tasks'
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'uninstall preserves original runtime'

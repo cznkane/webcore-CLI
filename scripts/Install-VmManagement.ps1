@@ -158,7 +158,7 @@ try{
  $random=New-Object byte[] 48;$rng=[Security.Cryptography.RandomNumberGenerator]::Create();$rng.GetBytes($random);$rng.Dispose()
  $password=[Convert]::ToBase64String($random)+'aA1!'
  $secure=ConvertTo-SecureString $password -AsPlainText -Force
- New-LocalUser -Name $WorkerName -Password $secure -AccountNeverExpires -PasswordNeverExpires -Description 'Restricted SmartHome validation worker; credentials held only by Task Scheduler'|Out-Null
+ New-LocalUser -Name $WorkerName -Password $secure -AccountNeverExpires -PasswordNeverExpires -Description 'Restricted SmartHome validation worker'|Out-Null
  $created=$true;$script:WorkerSid=(Get-LocalUser -Name $WorkerName).SID.Value
  if((Get-LocalGroupMember -SID 'S-1-5-32-545').SID.Value -notcontains $WorkerSid){Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $WorkerName}
  New-Item -ItemType Directory -Path $Root|Out-Null;Protect $Root $WorkerSid
