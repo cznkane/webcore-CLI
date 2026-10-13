@@ -14,6 +14,7 @@ jobs:
       - name: Windows management focused tests
         run: node --test test/windows-management.test.js
         timeout-minutes: 2
-      - run: npm test
+      - name: Full suite with per-test timeout
+        run: node --test --test-timeout=30000
         timeout-minutes: 7
       - run: npm run check
