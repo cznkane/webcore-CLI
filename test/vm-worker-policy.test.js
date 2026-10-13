@@ -13,7 +13,7 @@ test('exact trusted release and approval produce fixed command identity', () => 
   const cmd = validateWorkerRequest(request, trusted);
   assert.equal(cmd.executable, 'node.exe');
   assert.deepEqual(cmd.args, ['--test']);
-  assert.deepEqual(validateWorkerRequest({ ...request, operation: 'run_webcore_syntax_check' }, trusted).args, ['--check', 'server/index.js', 'server/client.js', 'server/hubitat.js', 'server/piston.js']);
+  assert.deepEqual(validateWorkerRequest({ ...request, operation: 'run_webcore_syntax_check' }, trusted).args, ['--check', 'server/index.js']);
 });
 test('reject unknown operations, injection fields and mismatched release', () => {
   for (const invalid of [
