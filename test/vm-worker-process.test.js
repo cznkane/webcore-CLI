@@ -15,7 +15,7 @@ test('fixed Node execution rejects arbitrary commands and flags', async () => {
     { ...base, args: ['--check', '../outside.js'] },
     { ...base, cwd: '../relative' },
     { ...base, timeoutMs: 999999 }
-  ]) await assert.rejects(runFixedNodeOperation(invalid), /permitted|arguments|directory|timeout/);
+  ]) await assert.rejects(runFixedNodeOperation(invalid), /permitted|identity|arguments|directory|timeout/);
 });
 test('fixed runner disables shell and suppresses child output', async () => {
   let options;
