@@ -39,6 +39,9 @@ jobs:
         run: |
           & ./build/vm-management/VmManagement.exe selftest
           if ($LASTEXITCODE -ne 0) { throw 'Native security checks failed' }
+      - name: Real restricted identity and installation integration
+        shell: powershell
+        run: ./scripts/Test-VmManagementIntegration.ps1
       - name: Full suite on Windows
         run: npm test
       - name: Build pinned installation artifact

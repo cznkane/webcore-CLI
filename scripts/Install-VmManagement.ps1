@@ -39,7 +39,7 @@ function Assert-Protected([string]$Path,[string]$ReaderSid){
  $write=[Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
  foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw 'Unprotected management input'}}}
 }
-function Export-Task([string]$Name){[string](Export-ScheduledTask -TaskName $Name -TaskPath '\')}
+function Export-Task([string]$Name){$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();[string]$scheduler.GetFolder('\').GetTask($Name).Xml}
 function Snapshot([string]$Source,[string]$Commit){
  Assert-NoReparse $Source
  $destination=Join-Path $Root "releases\$Commit"
@@ -82,6 +82,9 @@ if($Mode -in @('Verify','Recover','Uninstall')){
  if($Mode -eq 'Recover'){
   Assert-Protected (Join-Path $Root 'recovery\original-tunnel.yaml')
   Stop-ScheduledTask -TaskName $BrokerTask -ErrorAction SilentlyContinue
+  Disable-ScheduledTask -TaskName $BrokerTask|Out-Null
+  Stop-ScheduledTask -TaskName $WorkerTask -ErrorAction SilentlyContinue
+  Disable-ScheduledTask -TaskName $WorkerTask|Out-Null
   $watchdog=Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog';$enabled=$watchdog.Settings.Enabled
   try{
    Disable-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog' | Out-Null
@@ -156,7 +159,7 @@ try{
  $secure=ConvertTo-SecureString $password -AsPlainText -Force
  New-LocalUser -Name $WorkerName -Password $secure -AccountNeverExpires -PasswordNeverExpires -Description 'Restricted SmartHome validation worker; credentials held only by Task Scheduler'|Out-Null
  $created=$true;$script:WorkerSid=(Get-LocalUser -Name $WorkerName).SID.Value
- Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $WorkerName
+ if((Get-LocalGroupMember -SID 'S-1-5-32-545').SID.Value -notcontains $WorkerSid){Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $WorkerName}
  New-Item -ItemType Directory -Path $Root|Out-Null;Protect $Root $WorkerSid
  foreach($directory in @('bin','catalog','releases','audit','recovery','downloads','scratch')){New-Item -ItemType Directory -Path (Join-Path $Root $directory)|Out-Null}
  Protect (Join-Path $Root 'scratch') $WorkerSid -Writable

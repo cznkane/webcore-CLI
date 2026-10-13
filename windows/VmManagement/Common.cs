@@ -15,7 +15,7 @@ using Microsoft.Win32.SafeHandles;
 
 namespace SmartHome.VmManagement {
 public static class Guard {
- public static readonly JavaScriptSerializer Json = new JavaScriptSerializer { MaxJsonLength = 65536, RecursionLimit = 12 };
+ public static JavaScriptSerializer Json { get {return new JavaScriptSerializer { MaxJsonLength = 65536, RecursionLimit = 12 };} }
  public static string Hash(string path) { using(var s=File.OpenRead(path)) using(var h=SHA256.Create()) return BitConverter.ToString(h.ComputeHash(s)).Replace("-", "").ToLowerInvariant(); }
  public static string Digest(string value) { using(var h=SHA256.Create()) return BitConverter.ToString(h.ComputeHash(Encoding.UTF8.GetBytes(value))).Replace("-", "").ToLowerInvariant(); }
  public static void Require(bool ok, string code) { if(!ok) throw new InvalidOperationException(code); }

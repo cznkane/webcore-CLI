@@ -36,9 +36,10 @@ public static class Host {
  [STAThread] public static int Main(string[] args) {
   try {
    Guard.Require(args.Length==1,"fixed_mode_required");
-   if(args[0]=="selftest") return SelfTest.Run();
+   if(args[0]=="selftest") {try{return SelfTest.Run();}catch(Exception e){Console.Error.WriteLine(e.ToString());return 2;}}
    Load();
    if(args[0]=="client") { Guard.Require(WindowsIdentity.GetCurrent().User.Value=="S-1-5-18","system_client_required");var text=ReadInput(); Console.WriteLine(Guard.Json.Serialize(Pipe.Call(BrokerPipe,exe,c.ExeSha256,Guard.Parse(text))));return 0; }
+   if(args[0]=="operator-client") { Guard.Require(WindowsIdentity.GetCurrent().User.Value==c.OperatorSid&&new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator),"operator_identity");Console.WriteLine(Guard.Json.Serialize(Pipe.Call(OperatorPipe,exe,c.ExeSha256,Guard.Parse(ReadInput()))));return 0; }
    if(args[0]=="operator") { Operator();return 0; }
    if(args[0]=="probe") { Console.WriteLine(Guard.Json.Serialize(Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="list" })));return 0; }
    if(args[0]=="broker") {
@@ -58,7 +59,7 @@ public static class Host {
  static void Serve(string name,string sid,bool op,bool worker) {
   using(var pipe=Pipe.Server(name,sid)) while(true) {
    pipe.WaitForConnection();
-   using(var timer=new Timer(_=>pipe.Dispose(),null,worker?150000:10000,Timeout.Infinite)) {
+   using(var timer=new System.Threading.Timer(_=>pipe.Dispose(),null,worker?150000:10000,Timeout.Infinite)) {
     try {
      var message=Pipe.Receive(pipe);
      string actual=Pipe.Peer(pipe,exe,c.ExeSha256);Guard.Require(actual==sid,"peer_sid");
@@ -79,7 +80,7 @@ public static class Host {
  }
  public static void Verify(Release r) {
   Guard.Require(r!=null&&r.Files!=null&&r.Files.Count>0&&r.Files.Count<=2048,"invalid_manifest");Guard.Protected(r.Root,c==null?null:c.WorkerSid);
-  foreach(var entry in r.Files) { Guard.Require(!String.IsNullOrEmpty(entry.Key)&&entry.Key.Split('/').All(p=>p!="."&&p!=".."&&p.Length>0)&&!entry.Key.Contains("\\")&&!entry.Key.Contains(":"),"manifest_path");var p=Path.Combine(r.Root,entry.Key.Replace('/',Path.DirectorySeparatorChar));Guard.Protected(p,c==null?null:c.WorkerSid);Guard.Require(Guard.Hash(p)==entry.Value,"release_integrity"); }
+  foreach(var entry in r.Files) { Guard.Require(!String.IsNullOrEmpty(entry.Key)&&entry.Key.Split('/').All(part=>part!="."&&part!=".."&&part.Length>0)&&!entry.Key.Contains("\\")&&!entry.Key.Contains(":"),"manifest_path");var p=Path.Combine(r.Root,entry.Key.Replace('/',Path.DirectorySeparatorChar));Guard.Protected(p,c==null?null:c.WorkerSid);Guard.Require(Guard.Hash(p)==entry.Value,"release_integrity"); }
   var actual=Directory.GetFiles(r.Root,"*",SearchOption.AllDirectories).Select(p=>p.Substring(r.Root.Length+1).Replace('\\','/')).OrderBy(x=>x).ToArray();
   Guard.Require(actual.SequenceEqual(r.Files.Keys.OrderBy(x=>x)),"unexpected_release_file");
   foreach(var d in Directory.GetDirectories(r.Root,"*",SearchOption.AllDirectories)) Guard.Protected(d,c==null?null:c.WorkerSid);
@@ -105,6 +106,7 @@ public static class Host {
  static object View(Request r) { return new { requestId=r.Id,operation=r.Operation,commit=r.Commit,sha256=r.Sha256,expectedCurrentSha256=r.ExpectedCurrentSha256,status=r.Status,expiresAt=r.Expires.ToString("o"),result=r.Result }; }
  static object OperatorRequest(Dictionary<string,object> m) {
   var action=Guard.Text(m,"action");
+  if(action=="request") return BrokerRequest(m);
   if(action=="bootstrap") { Guard.Keys(m,"action");var state=GetState();return BrokerRequest(Guard.Parse(Guard.Json.Serialize(new{action="request",operation="deploy_release",commit=c.CandidateCommit,sha256=c.CandidateSha256,expectedCurrentSha256=state.Current.Sha256}))); }
   if(action=="list") { Guard.Keys(m,"action");lock(sync) return new { ok=true,requests=requests.Values.Select(View).ToArray() }; }
   Guard.Keys(m,"action","requestId");var id=Guard.Text(m,"requestId");Guard.Require(action=="approve"||action=="deny","unknown_operator_action");
