@@ -55,7 +55,9 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $runtimeAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'Modify','ContainerInherit,ObjectInherit','None','Allow'))
  Set-Acl $payload $runtimeAcl
  foreach($publicExe in @($node,(Join-Path $fixture 'tunnel-client.exe'))){
-  $acl=Get-Acl $publicExe;$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'ReadAndExecute','Allow'));Set-Acl $publicExe $acl
+  $acl=Get-Acl $publicExe;$acl.SetAccessRuleProtection($true,$true)
+  $publicRights=if([IO.Path]::GetFileName($publicExe) -eq 'node.exe'){'ReadAndExecute'}else{'Modify'}
+  $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),$publicRights,'Allow'));Set-Acl $publicExe $acl
  }
  # Parent permits replacement of protected descendants, while sibling permissions must remain unchanged.
  $sibling=Join-Path $fixture 'unrelated';New-Item -ItemType Directory -Path $sibling|Out-Null
