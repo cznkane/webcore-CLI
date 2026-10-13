@@ -209,7 +209,7 @@ function validateNativeOperandPositions(body, errors) {
   const operandFields = ['lo', 'ro', 'ro2', 'to', 'to2', 'wd'];
   const operands = (node, path) => {
     for (const key of operandFields) if (Object.hasOwn(node, key)) validateOperandExpression(node[key], `${path}.${key}`, errors, {
-      allowEmptyPlaceholder: node.t === 'condition' && ['ro2', 'to', 'to2'].includes(key)
+      allowEmptyPlaceholder: ['condition', 'restriction'].includes(node.t) && ['ro2', 'to', 'to2'].includes(key)
     });
   };
   const statements = (nodes, path) => {
