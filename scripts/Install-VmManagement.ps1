@@ -20,7 +20,7 @@ $FirewallName='SmartHome-WebCoRE-Worker-NetworkDeny'
 function Write-Json($Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 12),$Utf8)}
 function Hash($Path){(Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()}
 function Text-Hash([string]$Text){$sha=[Security.Cryptography.SHA256]::Create();try{[BitConverter]::ToString($sha.ComputeHash($Utf8.GetBytes($Text))).Replace('-','').ToLowerInvariant()}finally{$sha.Dispose()}}
-function Assert-NoReparse([string]$Path){$item=Get-Item -LiteralPath $Path -Force;while($null -ne $item){if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){throw 'Reparse point rejected'};$item=$item.Parent}}
+function Assert-NoReparse([string]$Path){$cursor=[IO.Path]::GetFullPath($Path);while($cursor){$item=Get-Item -LiteralPath $cursor -Force;if(($item.Attributes -band [IO.FileAttributes]::ReparsePoint)-ne 0){throw 'Reparse point rejected'};$cursor=[IO.Path]::GetDirectoryName($cursor)}}
 function Protect([string]$Path,[string]$ReaderSid,[switch]$Writable){
  Assert-NoReparse $Path
  $directory=Test-Path -LiteralPath $Path -PathType Container
