@@ -26,3 +26,29 @@ export async function runManagementReadOnly(name, { env = process.env, os = plat
   try { return { operation: name, read_only: true, result: JSON.parse(output) }; }
   catch { throw new Error('Windows diagnostic returned invalid structured output.'); }
 }
+
+const testOperations = Object.freeze({
+  vm_run_webcore_tests: ['test'],
+  vm_run_webcore_syntax_check: ['run', 'check']
+});
+export const managementTestToolNames = Object.freeze(Object.keys(testOperations));
+export function managementTestsAvailable(env = process.env, os = platform()) {
+  return os === 'win32' && env.WEBCORE_WINDOWS_MANAGEMENT_TESTS === 'enabled';
+}
+export async function runManagementTest(name, { confirm, env = process.env, os = platform(), runner = execFile } = {}) {
+  if (!Object.hasOwn(testOperations, name)) throw new Error('Unknown VM test operation.');
+  if (!managementTestsAvailable(env, os)) throw new Error('VM test execution is disabled.');
+  if (confirm !== true) throw new Error('Explicit VM test approval is required.');
+  const args = testOperations[name];
+  const output = await new Promise((resolve, reject) => {
+    runner('npm.cmd', args, {
+      cwd: ROOT, shell: false, windowsHide: true, timeout: 120000,
+      maxBuffer: 65536, env
+    }, (error, stdout, stderr) => {
+      if (error?.code === 'ENOENT') return reject(new Error('Approved test executable or checkout unavailable.'));
+      resolve({ exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout, stderr, timedOut: error?.killed === true });
+    });
+  });
+  const sanitize = value => String(value).replace(/https?:\\/\\/[^\\s]+/gi, '[REDACTED_URL]').replace(/(token|password|secret|api[_-]?key)\\s*[:=]\\s*[^\\s]+/gi, '$1=[REDACTED]').slice(0, 12000);
+  return { operation: name, execution: 'approved_allowlist', exit_code: output.exitCode, timed_out: output.timedOut, stdout: sanitize(output.stdout), stderr: sanitize(output.stderr) };
+}
