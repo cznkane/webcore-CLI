@@ -53,12 +53,25 @@ function Assert-ImmutableParents([string]$Path){
 }
 function Remove-WorkerIdentity([string]$Sid){
  $canonicalSid=([Security.Principal.SecurityIdentifier]::new($Sid)).Value
+ # Never remove an account while one of its processes can still act.
+ foreach($process in Get-CimInstance Win32_Process){try{$owner=$process|Invoke-CimMethod -MethodName GetOwnerSid -ErrorAction Stop;if($owner.ReturnValue -eq 0 -and $owner.Sid -eq $canonicalSid){throw 'Worker process remains active'}}catch{if($_.Exception.Message -eq 'Worker process remains active'){throw}}}
  $profile=Get-CimInstance Win32_UserProfile -Filter "SID='$canonicalSid'"
- for($attempt=0;$null -ne $profile -and $profile.Loaded -and $attempt -lt 20;$attempt++){Start-Sleep -Seconds 1;$profile=Get-CimInstance Win32_UserProfile -Filter "SID='$canonicalSid'"}
- if($null -ne $profile -and $profile.Loaded){throw 'Worker profile remains loaded; account and deny rule must be retained for review'}
- if($null -ne $profile){$profile|Remove-CimInstance}
+ if($null -ne $profile -and -not $profile.Loaded){$profile|Remove-CimInstance}
  [SmartHomeWorkerRights]::Apply($canonicalSid,$true)
  Remove-LocalUser -Name $WorkerName
+ if($null -ne $profile -and $profile.Loaded){
+  # Windows can retain a batch-logon hive after every worker process has exited.
+  # Retire it at next startup rather than forcing an unsafe hive unload.
+  $script:ProfileCleanupPending=$true
+  $cleanup=Join-Path $Root 'recovery\Remove-WorkerProfile.ps1'
+  Copy-Item -LiteralPath (Join-Path $PackageRoot 'scripts\Remove-WorkerProfile.ps1') -Destination $cleanup
+  Protect $cleanup $null
+  Write-Json (Join-Path $Root 'recovery\profile-cleanup.json') @{Sid=$canonicalSid;Reason='Windows batch-logon profile cache';RetireAt='next startup'}
+  $action=New-ScheduledTaskAction -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File `"$cleanup`""
+  $principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
+  Register-ScheduledTask -TaskName 'SmartHome-WebCoRE-ProfileCleanup' -Action $action -Trigger (New-ScheduledTaskTrigger -AtStartup) -Principal $principal|Out-Null
+  Write-Output 'Worker account retired; Windows retains its unloaded-process profile cache. Protected cleanup is scheduled for next startup.'
+ }
 }
 function Export-Task([string]$Name){$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();[string]$scheduler.GetFolder('\').GetTask($Name).Xml}
 function Snapshot([string]$Source,[string]$Commit,[switch]$IsSnapshot){
@@ -194,7 +207,7 @@ Write-Output 'PREFLIGHT PASS: pinned package verified; existing SYSTEM identity 
 if($Mode -eq 'Preflight'){exit 0}
 if($Activate){throw 'Initial activation is a separate approved release cutover through the broker; Install never restarts production'}
 # Installation provisions only the boundary. Existing tunnel, watchdog and credentials stay byte-identical.
-$created=$false;$createdRoot=$false;$cfg=$null;$initialConfigSha256=Hash $TunnelConfigPath
+$created=$false;$createdRoot=$false;$cfg=$null;$script:ProfileCleanupPending=$false;$initialConfigSha256=Hash $TunnelConfigPath
 try{
  $random=New-Object byte[] 48;$rng=[Security.Cryptography.RandomNumberGenerator]::Create();$rng.GetBytes($random);$rng.Dispose()
  $password=[Convert]::ToBase64String($random)+'aA1!'
@@ -242,9 +255,10 @@ try{
 }catch{
  # Never scatter repairs across existing service/tunnel. Remove only new task/account/rule on failure.
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
- Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
  if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
- if($created){try{Remove-WorkerIdentity $WorkerSid}catch{Write-Warning 'Worker identity/profile cleanup remains owed; protected recovery inventory retained'}}
- if($createdRoot -and (Test-Path -LiteralPath $Root) -and (Hash $TunnelConfigPath) -eq $initialConfigSha256 -and @(Get-ChildItem -LiteralPath (Join-Path $Root 'audit') -File -ErrorAction SilentlyContinue).Count -eq 0){try{Get-ChildItem -LiteralPath $Root -Recurse -Force|ForEach-Object{Assert-NoReparse $_.FullName};Remove-Item -LiteralPath $Root -Recurse -Force}catch{Write-Warning 'Protected partial-install inventory retained for review'}}
+ $identityRetired=-not $created
+ if($created){try{Remove-WorkerIdentity $WorkerSid;$identityRetired=$true}catch{Write-Warning 'Worker identity/profile cleanup remains owed; protected recovery inventory retained'}}
+ if($identityRetired){Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue}
+ if($createdRoot -and -not $script:ProfileCleanupPending -and (Test-Path -LiteralPath $Root) -and (Hash $TunnelConfigPath) -eq $initialConfigSha256 -and @(Get-ChildItem -LiteralPath (Join-Path $Root 'audit') -File -ErrorAction SilentlyContinue).Count -eq 0){try{Get-ChildItem -LiteralPath $Root -Recurse -Force|ForEach-Object{Assert-NoReparse $_.FullName};Remove-Item -LiteralPath $Root -Recurse -Force}catch{Write-Warning 'Protected partial-install inventory retained for review'}}
  throw
 }

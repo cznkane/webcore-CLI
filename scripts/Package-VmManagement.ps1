@@ -9,7 +9,7 @@ New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
 foreach($dir in @('server','test','.codex-plugin','docs')){Copy-Item -LiteralPath (Join-Path $source $dir) -Destination $OutputDirectory -Recurse}
 foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-Item -LiteralPath (Join-Path $source $file) -Destination $OutputDirectory}
 New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'scripts')|Out-Null
-foreach($script in @('Install-VmManagement.ps1','VmWorkerRights.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (Join-Path $OutputDirectory 'scripts')}
+foreach($script in @('Install-VmManagement.ps1','VmWorkerRights.ps1','Remove-WorkerProfile.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (Join-Path $OutputDirectory 'scripts')}
 New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'bin')|Out-Null
 foreach($binary in @('VmManagement.exe','VmManagementApprove.exe')){Copy-Item -LiteralPath (Join-Path $source "build\vm-management\$binary") -Destination (Join-Path $OutputDirectory 'bin')}
 $files=[ordered]@{}

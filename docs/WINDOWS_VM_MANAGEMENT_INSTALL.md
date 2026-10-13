@@ -35,7 +35,7 @@ First recover and verify the original runtime. Then:
 & 'C:\ProgramData\SmartHome\VmManagementInstall-<commit>\scripts\Install-VmManagement.ps1' -Mode Uninstall
 ```
 
-**Expect:** only the new broker/worker tasks, new worker account and its outbound deny rule removed. Original MCP/watchdog tasks and credentials remain. Protected audit/recovery/release inventory is intentionally retained pending explicit retirement. Inspect it; do not label uninstall a complete no-dust retirement until remaining artifact ownership and deletion decisions are recorded.
+**Expect:** only the new broker/worker tasks, new worker account and its outbound deny rule removed. Original MCP/watchdog tasks and credentials remain. Protected audit/recovery/release inventory is intentionally retained pending explicit retirement. If Windows retains the worker profile after its processes exit, a protected one-shot cleanup retires it at the next separately authorized reboot; verify that cleanup and task self-removal before declaring retirement complete. Inspect it; do not label uninstall a complete no-dust retirement until remaining artifact ownership and deletion decisions are recorded.
 
 ## Unavoidable manual actions
 

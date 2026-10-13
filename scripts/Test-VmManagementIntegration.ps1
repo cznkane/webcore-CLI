@@ -133,13 +133,15 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover -PackageRoot $package
  Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall -PackageRoot $package
- Assert (-not(Get-CimInstance Win32_UserProfile -Filter "SID='$workerSid'")) 'uninstall removed worker profile residue'
+ $remainingProfile=Get-CimInstance Win32_UserProfile -Filter "SID='$workerSid'"
+ Assert ($null -eq $remainingProfile -or ((Test-Path "$root\recovery\profile-cleanup.json") -and (Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-ProfileCleanup' -ErrorAction SilentlyContinue))) 'profile removed or explicitly scheduled for retirement'
+ Assert (-not(Get-LocalUser -Name 'SmartHomeVmWorker' -ErrorAction SilentlyContinue)) 'worker account retired'
  Assert (-not(Test-Path "$root\installed.json")) 'uninstall disables MCP management registration'
  Assert (-not(Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Management' -ErrorAction SilentlyContinue)) 'uninstall removed only management tasks'
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'uninstall preserves original runtime'
  Write-Output 'WINDOWS INTEGRATION PASS'
 }finally{
- foreach($name in @('SmartHome-WebCoRE-Management','SmartHome-WebCoRE-Worker')+$createdTasks){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
+ foreach($name in @('SmartHome-WebCoRE-Management','SmartHome-WebCoRE-Worker','SmartHome-WebCoRE-ProfileCleanup')+$createdTasks){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Get-Process tunnel-client -ErrorAction SilentlyContinue|Stop-Process -Force
  Remove-NetFirewallRule -Name 'SmartHome-WebCoRE-Worker-NetworkDeny' -ErrorAction SilentlyContinue
  Remove-LocalUser -Name 'SmartHomeVmWorker' -ErrorAction SilentlyContinue
