@@ -4,8 +4,9 @@ import { existsSync } from 'node:fs';
 // Provisioned by the administrator installer. No path, executable, argument,
 // environment or shell override is accepted from an MCP request.
 const HOST = 'C:\\ProgramData\\SmartHome\\VmManagement\\bin\\VmManagement.exe';
+const ENABLED = 'C:\\ProgramData\\SmartHome\\VmManagement\\installed.json';
 export const vmOperations = Object.freeze(['run_webcore_tests', 'run_webcore_syntax_check', 'stage_release', 'deploy_release', 'rollback_release', 'restart_mcp']);
-export function vmManagementInstalled() { return process.platform === 'win32' && existsSync(HOST); }
+export function vmManagementInstalled() { return process.platform === 'win32' && existsSync(HOST) && existsSync(ENABLED); }
 export function validateVmEnvelope(request) {
   if (!request || typeof request !== 'object' || Array.isArray(request)) throw new Error('Invalid VM request.');
   const fields = request.action === 'request' ? ['action', 'operation', 'commit', 'sha256', 'expectedCurrentSha256'] : request.action === 'status' ? ['action', 'requestId'] : request.action === 'health' ? ['action'] : [];

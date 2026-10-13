@@ -134,6 +134,7 @@ if($Mode -in @('Verify','Recover','Uninstall')){
  # Uninstall retains protected audit and recovery files; never remove an active payload.
  $text=Get-Content -LiteralPath $cfg.TunnelConfig -Raw
  if($text.Contains($Root)-or $text.Contains($Root.Replace('\','\\'))){throw 'Restore and verify original runtime with Recover before uninstall'}
+ if(Test-Path -LiteralPath (Join-Path $Root 'installed.json')){Remove-Item -LiteralPath (Join-Path $Root 'installed.json')}
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
  if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
@@ -221,6 +222,7 @@ try{
  if((Hash $TunnelConfigPath)-ne $cfg.InitialConfigSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-MCP'))-ne $cfg.McpTaskXmlSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-Watchdog'))-ne $cfg.WatchdogTaskXmlSha256){throw 'Existing runtime preservation check failed'}
  $shell=New-Object -ComObject WScript.Shell;$shortcut=$shell.CreateShortcut($ApprovalShortcut);$shortcut.TargetPath=Join-Path $Root 'bin\VmManagementApprove.exe';$shortcut.WorkingDirectory=Join-Path $Root 'bin';$shortcut.Description='Independent scoped approvals for Smart Home VM management';$shortcut.Save()
  Existing-Verify
+ Write-Json (Join-Path $Root 'installed.json') @{enabled=$true;version=1}
  Write-Output "INSTALL PASS: boundary provisioned; production not cut over. Candidate commit: $($candidate.Commit); manifest SHA-256: $($candidate.Sha256). Use independent operator approval for activation."
 }catch{
  # Never scatter repairs across existing service/tunnel. Remove only new task/account/rule on failure.

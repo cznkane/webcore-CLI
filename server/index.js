@@ -111,7 +111,7 @@ rl.on('line', async line => {
     if (req.method === 'notifications/initialized' || req.method?.startsWith('notifications/')) return;
     if (req.method === 'initialize') return send({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: req.params?.protocolVersion ?? '2025-03-26', capabilities: { tools: {} }, serverInfo: { name: 'webcore-cli', version: packageInfo.version } } });
     if (req.method === 'ping') return send({ jsonrpc: '2.0', id: req.id, result: {} });
-    if (req.method === 'tools/list') return send({ jsonrpc: '2.0', id: req.id, result: { tools } });
+    if (req.method === 'tools/list') return send({ jsonrpc: '2.0', id: req.id, result: { tools: vmManagementInstalled() ? tools : tools.filter(tool => !tool.name.startsWith('vm_management_')) } });
     if (req.method === 'tools/call') {
       const name = req.params?.name;
       const schema = tools.find(t => t.name === name)?.inputSchema;

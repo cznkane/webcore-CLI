@@ -13,7 +13,7 @@ The earlier disconnected Node worker scaffolds and their prototype-only tests we
 | Test worker | Dedicated local account, Limited task, no administrator membership | Verified tests and syntax only; fresh environment; private writable scratch |
 | Operator channel | Exact installer-selected human SID and protected host executable | One-use, operation/commit/digest/current-state approval; five-minute expiry |
 
-Only six operations exist: `run_webcore_tests`, `run_webcore_syntax_check`, `stage_release`, `deploy_release`, `rollback_release`, `restart_mcp`. Every operation requires independent approval. Existing four VM diagnostic tools retain their read-only behavior. Three management tools appear after installation: health and request-status reads, plus a changing request tool. No MCP approval tool exists. The request tool is marked write/destructive and open-world because release staging contacts the fixed canonical GitHub source; health and status remain read-only.
+Only six operations exist: `run_webcore_tests`, `run_webcore_syntax_check`, `stage_release`, `deploy_release`, `rollback_release`, `restart_mcp`. Every operation requires independent approval. Existing four VM diagnostic tools retain their read-only behavior. An administrator-owned commissioning marker enables the adapter only after installation verification; uninstall removes it and tool listing drops management capabilities without a production restart. Three management tools appear after installation: health and request-status reads, plus a changing request tool. No MCP approval tool exists. The request tool is marked write/destructive and open-world because release staging contacts the fixed canonical GitHub source; health and status remain read-only.
 
 ## Security review
 

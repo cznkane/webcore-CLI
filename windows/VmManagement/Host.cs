@@ -41,7 +41,7 @@ public static class Host {
    Guard.Require(args.Length==1,"fixed_mode_required");
    if(args[0]=="selftest") {try{return SelfTest.Run();}catch(Exception e){Console.Error.WriteLine(e.ToString());return 2;}}
    Load();
-   if(args[0]=="client") { Guard.Require(WindowsIdentity.GetCurrent().User.Value=="S-1-5-18","system_client_required");var text=ReadInput(); Console.WriteLine(Guard.Json.Serialize(Pipe.Call(BrokerPipe,exe,c.ExeSha256,Guard.Parse(text))));return 0; }
+   if(args[0]=="client") { Guard.Require(File.Exists(Path.Combine(c.Root,"installed.json")),"not_commissioned"); Guard.Require(WindowsIdentity.GetCurrent().User.Value=="S-1-5-18","system_client_required");var text=ReadInput(); Console.WriteLine(Guard.Json.Serialize(Pipe.Call(BrokerPipe,exe,c.ExeSha256,Guard.Parse(text))));return 0; }
    if(args[0]=="operator-client") { Guard.Require(WindowsIdentity.GetCurrent().User.Value==c.OperatorSid&&new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator),"operator_identity");Console.WriteLine(Guard.Json.Serialize(Pipe.Call(OperatorPipe,exe,c.ExeSha256,Guard.Parse(ReadInput()))));return 0; }
    if(args[0]=="operator") { Operator();return 0; }
    if(args[0]=="probe") { Console.WriteLine(Guard.Json.Serialize(Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="list" })));return 0; }
@@ -111,6 +111,7 @@ public static class Host {
  public static bool CanApprove(Request request,DateTime now,bool executing) {return request!=null&&request.Status=="pending"&&request.Expires>now&&!executing;}
  static object OperatorRequest(Dictionary<string,object> m) {
   var action=Guard.Text(m,"action");
+  if(action!="list") Guard.Require(File.Exists(Path.Combine(c.Root,"installed.json")),"not_commissioned");
   if(action=="request") return BrokerRequest(m);
   if(action=="bootstrap") { Guard.Keys(m,"action");var state=GetState();return BrokerRequest(Guard.Parse(Guard.Json.Serialize(new{action="request",operation="deploy_release",commit=c.CandidateCommit,sha256=c.CandidateSha256,expectedCurrentSha256=state.Current.Sha256}))); }
   if(action=="list") { Guard.Keys(m,"action");lock(sync) return new { ok=true,requests=requests.Values.OrderByDescending(r=>r.Expires).Take(32).Select(View).ToArray() }; }

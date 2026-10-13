@@ -132,6 +132,7 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover -PackageRoot $package
  Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall -PackageRoot $package
+ Assert (-not(Test-Path "$root\installed.json")) 'uninstall disables MCP management registration'
  Assert (-not(Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Management' -ErrorAction SilentlyContinue)) 'uninstall removed only management tasks'
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'uninstall preserves original runtime'
  Write-Output 'WINDOWS INTEGRATION PASS'
