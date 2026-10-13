@@ -1,5 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { appendFile } from 'node:fs/promises';
 
 // This audit writer is inert until an independently provisioned, non-admin
 // worker supplies a protected absolute destination. Never log credentials,
