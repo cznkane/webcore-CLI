@@ -7,6 +7,8 @@ const base = { executable: 'C:\\TrustedNode\\node.exe', args: ['--test'], cwd: '
 test('fixed Node execution rejects arbitrary commands and flags', async () => {
   for (const invalid of [
     { ...base, executable: 'powershell.exe' },
+    { ...base, executable: 'node.exe' },
+    { ...base, executable: 'C:\\Untrusted\\other.exe' },
     { ...base, args: ['--eval', 'process.exit()'] },
     { ...base, args: ['--check', '../outside.js'] },
     { ...base, cwd: '../relative' },
