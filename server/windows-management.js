@@ -49,6 +49,6 @@ export async function runManagementTest(name, { confirm, env = process.env, os =
       resolve({ exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout, stderr, timedOut: error?.killed === true });
     });
   });
-  const sanitize = value => String(value).replace(/https?:\\/\\/[^\\s]+/gi, '[REDACTED_URL]').replace(/(token|password|secret|api[_-]?key)\\s*[:=]\\s*[^\\s]+/gi, '$1=[REDACTED]').slice(0, 12000);
+  const sanitize = value => String(value).replace(/https?:[^ ]+/gi, '[REDACTED_URL]').replace(/(token|password|secret|api[_-]?key)[^ ]{0,100}/gi, '[REDACTED_SECRET]').slice(0, 12000);
   return { operation: name, execution: 'approved_allowlist', exit_code: output.exitCode, timed_out: output.timedOut, stdout: sanitize(output.stdout), stderr: sanitize(output.stderr) };
 }
