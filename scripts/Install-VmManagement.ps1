@@ -51,6 +51,15 @@ function Assert-ImmutableParents([string]$Path){
   $cursor=[IO.Path]::GetDirectoryName($cursor)
  }
 }
+function Remove-WorkerIdentity([string]$Sid){
+ $canonicalSid=([Security.Principal.SecurityIdentifier]::new($Sid)).Value
+ $profile=Get-CimInstance Win32_UserProfile -Filter "SID='$canonicalSid'"
+ for($attempt=0;$null -ne $profile -and $profile.Loaded -and $attempt -lt 20;$attempt++){Start-Sleep -Seconds 1;$profile=Get-CimInstance Win32_UserProfile -Filter "SID='$canonicalSid'"}
+ if($null -ne $profile -and $profile.Loaded){throw 'Worker profile remains loaded; account and deny rule must be retained for review'}
+ if($null -ne $profile){$profile|Remove-CimInstance}
+ [SmartHomeWorkerRights]::Apply($canonicalSid,$true)
+ Remove-LocalUser -Name $WorkerName
+}
 function Export-Task([string]$Name){$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();[string]$scheduler.GetFolder('\').GetTask($Name).Xml}
 function Snapshot([string]$Source,[string]$Commit,[switch]$IsSnapshot){
  Assert-NoReparse $Source
@@ -69,6 +78,7 @@ function Snapshot([string]$Source,[string]$Commit,[switch]$IsSnapshot){
  return $release
 }
 function Existing-Verify{
+ Assert-Protected (Join-Path $Root 'config.json')
  $cfg=Get-Content -LiteralPath (Join-Path $Root 'config.json') -Raw|ConvertFrom-Json
  $state=Get-Content -LiteralPath (Join-Path $Root 'state.json') -Raw|ConvertFrom-Json
  Assert-Protected $Root $cfg.WorkerSid
@@ -110,6 +120,7 @@ if($rightsDigest -ne $manifest.Files.'scripts/VmWorkerRights.ps1'){throw 'Worker
 . ([scriptblock]::Create([Text.Encoding]::UTF8.GetString($rightsBytes)))
 if($Mode -in @('Verify','Recover','Uninstall')){
  if($Mode -eq 'Verify'){Existing-Verify;exit 0}
+ Assert-Protected (Join-Path $Root 'config.json')
  $cfg=Get-Content -LiteralPath (Join-Path $Root 'config.json') -Raw|ConvertFrom-Json
  if($Mode -eq 'Recover'){
   Assert-Protected (Join-Path $Root 'recovery\original-tunnel.yaml')
@@ -136,10 +147,9 @@ if($Mode -in @('Verify','Recover','Uninstall')){
  if($text.Contains($Root)-or $text.Contains($Root.Replace('\','\\'))){throw 'Restore and verify original runtime with Recover before uninstall'}
  if(Test-Path -LiteralPath (Join-Path $Root 'installed.json')){Remove-Item -LiteralPath (Join-Path $Root 'installed.json')}
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
+ Remove-WorkerIdentity $cfg.WorkerSid
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
  if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
- [SmartHomeWorkerRights]::Apply($cfg.WorkerSid,$true)
- Remove-LocalUser -Name $WorkerName
  Write-Output 'Management tasks, firewall rule and worker account removed. Protected audit/recovery inventory retained; no live MCP/watchdog task removed.'
  exit 0
 }
@@ -229,7 +239,7 @@ try{
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
  if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
- if($created){try{[SmartHomeWorkerRights]::Apply($WorkerSid,$true)}catch{};Remove-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue}
+ if($created){try{Remove-WorkerIdentity $WorkerSid}catch{Write-Warning 'Worker identity/profile cleanup remains owed; protected recovery inventory retained'}}
  if($createdRoot -and (Test-Path -LiteralPath $Root) -and (Hash $TunnelConfigPath) -eq $initialConfigSha256 -and @(Get-ChildItem -LiteralPath (Join-Path $Root 'audit') -File -ErrorAction SilentlyContinue).Count -eq 0){try{Get-ChildItem -LiteralPath $Root -Recurse -Force|ForEach-Object{Assert-NoReparse $_.FullName};Remove-Item -LiteralPath $Root -Recurse -Force}catch{Write-Warning 'Protected partial-install inventory retained for review'}}
  throw
 }

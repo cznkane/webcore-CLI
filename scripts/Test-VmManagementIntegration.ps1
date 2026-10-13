@@ -50,6 +50,7 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  Start-Sleep -Seconds 3
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node -TunnelConfigPath $yaml
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'installation preserves existing runtime'
+ $workerSid=(Get-LocalUser -Name 'SmartHomeVmWorker').SID.Value
  $state=Get-Content "$root\state.json" -Raw|ConvertFrom-Json
  $scope=@{action='request';operation='run_webcore_syntax_check';commit=$state.Current.Commit;sha256=$state.Current.Sha256;expectedCurrentSha256=$state.Current.Sha256}
  $request=Invoke-Operator $scope;Assert ($request.status-eq 'pending') 'independent scoped request queued'
@@ -132,6 +133,7 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Recover -PackageRoot $package
  Assert ((Get-Content $yaml -Raw).Contains($payload)) 'out-of-band original configuration recovery'
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Uninstall -PackageRoot $package
+ Assert (-not(Get-CimInstance Win32_UserProfile -Filter "SID='$workerSid'")) 'uninstall removed worker profile residue'
  Assert (-not(Test-Path "$root\installed.json")) 'uninstall disables MCP management registration'
  Assert (-not(Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Management' -ErrorAction SilentlyContinue)) 'uninstall removed only management tasks'
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'uninstall preserves original runtime'
