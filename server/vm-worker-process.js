@@ -11,7 +11,7 @@ export async function runFixedNodeOperation({ executable, args, cwd, timeoutMs =
   if (typeof expectedExecutable !== 'string' || executable !== expectedExecutable) throw new Error('Trusted Node executable identity required.');
   const validArgs = Array.isArray(args) && (
     (args.length === 1 && args[0] === '--test') ||
-    (args.length === 2 && args[0] === '--check' && args[1] === 'server/index.js')
+    (args.length === 5 && args[0] === '--check' && args.slice(1).join('|') === 'server/index.js|server/client.js|server/hubitat.js|server/piston.js')
   );
   if (!validArgs) throw new Error('Unapproved Node arguments.');
   if (typeof cwd !== 'string' || !win32.isAbsolute(cwd) || !/^[A-Za-z]:/.test(cwd) || cwd.includes('"') || cwd.includes(String.fromCharCode(10)) || cwd.includes(String.fromCharCode(13))) throw new Error('Absolute Windows working directory required.');
