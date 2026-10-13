@@ -126,8 +126,17 @@ public static class Host {
    busy=true;Task.Run(()=>Execute(r));return View(r);
   }
  }
+ static void RequireNetworkBoundary() {
+  dynamic policy=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2"));
+  Guard.Require((bool)policy.FirewallEnabled[1]&&(bool)policy.FirewallEnabled[2]&&(bool)policy.FirewallEnabled[4],"worker_firewall_disabled");
+  dynamic rule=policy.Rules.Item("SmartHome restricted worker outbound deny");
+  Guard.Require((bool)rule.Enabled&&(int)rule.Action==0&&(int)rule.Direction==2&&((int)rule.Profiles&7)==7&&(int)rule.Protocol==256,"worker_firewall_drift");
+  var descriptor=new System.Security.AccessControl.RawSecurityDescriptor((string)rule.LocalUserAuthorizedList);
+  Guard.Require(descriptor.DiscretionaryAcl!=null&&descriptor.DiscretionaryAcl.Count==1&&((System.Security.AccessControl.CommonAce)descriptor.DiscretionaryAcl[0]).SecurityIdentifier.Value==c.WorkerSid,"worker_firewall_scope");
+ }
  static void Execute(Request r) {
   try {
+   RequireNetworkBoundary();
    Guard.Audit(c.Root,r.Id,r.Operation,"started",r.Sha256);
    object result;
    if(r.Operation=="stage_release") result=Stage(r);
@@ -218,7 +227,7 @@ public static class Host {
  static void VerifyRunningNode(string releaseRoot) {
   var script=releaseRoot+"\\server\\index.js";
   for(int i=0;i<30;i++) {
-   var tunnels=Process.GetProcessesByName("tunnel-client").Where(p=>String.Equals(p.MainModule.FileName,c.TunnelExe,StringComparison.OrdinalIgnoreCase)).Select(p=>p.Id).ToArray();Guard.Require(tunnels.Length==1,"tunnel_identity");
+   var tunnels=new List<int>();foreach(var candidate in Process.GetProcessesByName("tunnel-client")){using(candidate){try{if(String.Equals(Pipe.Image((uint)candidate.Id),c.TunnelExe,StringComparison.OrdinalIgnoreCase))tunnels.Add(candidate.Id);}catch{if(candidate.HasExited)continue;throw new InvalidOperationException("process_inspection");}}}Guard.Require(tunnels.Count==1,"tunnel_identity");
    using(var search=new ManagementObjectSearcher("SELECT ExecutablePath,CommandLine,ParentProcessId FROM Win32_Process WHERE Name='node.exe'")) {
     int matched=0;foreach(ManagementObject process in search.Get()) {
      var command=process["CommandLine"] as string;var image=process["ExecutablePath"] as string;
@@ -230,7 +239,7 @@ public static class Host {
  }
  static void AtomicText(string path,string text) { var temp=path+".vm-management.tmp";using(var f=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {var b=new UTF8Encoding(false).GetBytes(text);f.Write(b,0,b.Length);f.Flush(true);} File.Replace(temp,path,null); }
  static void WaitTunnel(bool running) {
-  for(int i=0;i<30;i++) {int count=0;foreach(var p in Process.GetProcessesByName("tunnel-client")) { using(p) {try {if(String.Equals(p.MainModule.FileName,c.TunnelExe,StringComparison.OrdinalIgnoreCase)) count++;}catch {throw new InvalidOperationException("process_inspection");}} }
+  for(int i=0;i<30;i++) {int count=0;foreach(var p in Process.GetProcessesByName("tunnel-client")) { using(p) {try {if(String.Equals(Pipe.Image((uint)p.Id),c.TunnelExe,StringComparison.OrdinalIgnoreCase)) count++;}catch {if(p.HasExited)continue;throw new InvalidOperationException("process_inspection");}} }
    Guard.Require(count<=1,"duplicate_tunnel");if((running&&count==1)||(!running&&count==0)) return;Thread.Sleep(1000);
   }throw new InvalidOperationException("tunnel_state_timeout");
  }

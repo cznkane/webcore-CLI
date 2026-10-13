@@ -87,7 +87,7 @@ public static class Pipe {
    Guard.Require(!h.IsInvalid,"pipe_create_failed"); return new NamedPipeServerStream(PipeDirection.InOut,false,false,h);
   } finally { LocalFree(d); }
  }
- static string Image(uint pid) { var h=OpenProcess(0x1000,false,pid); Guard.Require(h!=IntPtr.Zero,"peer_process"); try { var b=new StringBuilder(32768); int n=b.Capacity; Guard.Require(QueryFullProcessImageName(h,0,b,ref n),"peer_image"); return b.ToString(); } finally { CloseHandle(h); } }
+ public static string Image(uint pid) { var h=OpenProcess(0x1000,false,pid); Guard.Require(h!=IntPtr.Zero,"peer_process"); try { var b=new StringBuilder(32768); int n=b.Capacity; Guard.Require(QueryFullProcessImageName(h,0,b,ref n),"peer_image"); return b.ToString(); } finally { CloseHandle(h); } }
  public static string Peer(NamedPipeServerStream p,string expectedImage,string expectedDigest) {
   uint pid; Guard.Require(GetNamedPipeClientProcessId(p.SafePipeHandle,out pid),"peer_pid");
   string sid=null; p.RunAsClient(()=>{using(var id=WindowsIdentity.GetCurrent(true)) { Guard.Require(id!=null,"peer_token"); sid=id.User.Value; }});
