@@ -5,7 +5,7 @@ import { createServer } from 'node:net';
 // A real deployment must independently enforce named-pipe DACLs and peer identity.
 export function createVmWorkerPipeServer({ pipePath, handleFrame, maxBytes = 4096, createServerImpl = createServer }) {
   if (process.platform !== 'win32') throw new Error('Windows worker transport only.');
-  const prefix = String.raw`\\\\.\\pipe` + String.fromCharCode(92);
+  const prefix = String.fromCharCode(92, 92, 46, 92, 112, 105, 112, 101, 92);
   if (typeof pipePath !== 'string' || !pipePath.startsWith(prefix) || !/^[A-Za-z0-9_-]{8,64}$/.test(pipePath.slice(prefix.length))) throw new Error('Invalid named pipe.');
   if (typeof handleFrame !== 'function') throw new Error('Frame handler required.');
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 256 || maxBytes > 16384) throw new Error('Invalid frame size.');
