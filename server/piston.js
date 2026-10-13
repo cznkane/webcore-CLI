@@ -186,8 +186,14 @@ function validateExpressionTree(node, path, errors, depth = 0, allowOperator = f
   }
 }
 
-function validateOperandExpression(operand, path, errors) {
+function validateOperandExpression(operand, path, errors, { allowEmptyPlaceholder = false } = {}) {
   if (!isObject(operand) || !['c', 'e'].includes(operand.t)) return;
+  // Native webCoRE emits inactive comparison placeholders such as { g: 'any', t: 'c' }.
+  // Only optional comparison operands may use this form; active operands remain strict.
+  if (allowEmptyPlaceholder && operand.t === 'c' && !Object.hasOwn(operand, 'c') &&
+      !Object.hasOwn(operand, 'e') && !Object.hasOwn(operand, 'exp') &&
+      !Object.hasOwn(operand, 'vt') && !Object.hasOwn(operand, 'x') &&
+      Object.keys(operand).every(key => ['g', 't', 'f'].includes(key))) return;
   if (operand.t === 'c' && directConstantTypes.has(operand.vt)) {
     if (!Object.hasOwn(operand, 'c')) errors.push(`${path}.c: time/date constant requires its value.`);
     return;
@@ -202,7 +208,9 @@ function validateOperandExpression(operand, path, errors) {
 function validateNativeOperandPositions(body, errors) {
   const operandFields = ['lo', 'ro', 'ro2', 'to', 'to2', 'wd'];
   const operands = (node, path) => {
-    for (const key of operandFields) if (Object.hasOwn(node, key)) validateOperandExpression(node[key], `${path}.${key}`, errors);
+    for (const key of operandFields) if (Object.hasOwn(node, key)) validateOperandExpression(node[key], `${path}.${key}`, errors, {
+      allowEmptyPlaceholder: node.t === 'condition' && ['ro2', 'to', 'to2'].includes(key)
+    });
   };
   const statements = (nodes, path) => {
     if (!Array.isArray(nodes)) return;
