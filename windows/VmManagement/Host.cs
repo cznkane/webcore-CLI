@@ -19,7 +19,7 @@ namespace SmartHome.VmManagement {
 public sealed class Config {
  public string Root, WorkerSid, OperatorSid, ExeSha256, NodePath, NodeSha256, WorkerNodePath, WorkerNodeSha256, TunnelConfig, TunnelExe, TunnelExeSha256, McpTaskXmlSha256, WatchdogTaskXmlSha256, InitialCommand, InitialConfigSha256, CandidateCommit, CandidateSha256;
 }
-public sealed class Release { public string Commit, Sha256, Root; public Dictionary<string,string> Files; }
+public sealed class Release { public string Commit, Sha256, Root, Version; public bool IsSnapshot; public Dictionary<string,string> Files; }
 public sealed class State { public Release Current, Previous;public string ConfigSha256, CommandRoot;public string Recovery="clean"; }
 public sealed class Request { public string Id,Operation,Commit,Sha256,ExpectedCurrentSha256,Status;public DateTime Expires;public object Result; }
 public static class Host {
@@ -92,7 +92,7 @@ public static class Host {
  static object BrokerRequest(Dictionary<string,object> m) {
   var action=Guard.Text(m,"action");
   if(action=="status") { Guard.Keys(m,"action","requestId");var id=Guard.Text(m,"requestId");Guard.Require(Guard.Hex(id,48),"invalid_request_id");lock(sync) { Request r;Guard.Require(requests.TryGetValue(id,out r),"unknown_request");return View(r); } }
-  if(action=="health") { Guard.Keys(m,"action");var s=GetState();return new { ok=true,busy=busy,currentCommit=s.Current.Commit,currentSha256=s.Current.Sha256,previousCommit=s.Previous==null?null:s.Previous.Commit,recovery=s.Recovery,approvalChannel="local_operator" }; }
+  if(action=="health") { Guard.Keys(m,"action");var s=GetState();return new { ok=true,busy=busy,currentCommit=s.Current.Commit,currentIsSnapshot=s.Current.IsSnapshot,currentVersion=s.Current.Version,currentSha256=s.Current.Sha256,previousCommit=s.Previous==null?null:s.Previous.Commit,recovery=s.Recovery,approvalChannel="local_operator" }; }
   Guard.Keys(m,"action","operation","commit","sha256","expectedCurrentSha256");Guard.Require(action=="request","unknown_action");
   var operation=Guard.Text(m,"operation");var commit=Guard.Text(m,"commit");var digest=Guard.Text(m,"sha256");var current=Guard.Text(m,"expectedCurrentSha256");
   Guard.Require(Operations.Contains(operation)&&Guard.Hex(commit,40)&&Guard.Hex(digest,64)&&Guard.Hex(current,64),"invalid_scope");
@@ -108,6 +108,7 @@ public static class Host {
  }
  static void Prune() { foreach(var id in requests.Where(x=>x.Value.Expires<DateTime.UtcNow.AddHours(-1)).Select(x=>x.Key).ToArray()) requests.Remove(id);Guard.Require(requests.Count<=1024,"history_capacity"); }
  static object View(Request r) { return new { requestId=r.Id,operation=r.Operation,commit=r.Commit,sha256=r.Sha256,expectedCurrentSha256=r.ExpectedCurrentSha256,status=r.Status,expiresAt=r.Expires.ToString("o"),result=r.Result }; }
+ public static bool CanApprove(Request request,DateTime now,bool executing) {return request!=null&&request.Status=="pending"&&request.Expires>now&&!executing;}
  static object OperatorRequest(Dictionary<string,object> m) {
   var action=Guard.Text(m,"action");
   if(action=="request") return BrokerRequest(m);
@@ -115,7 +116,7 @@ public static class Host {
   if(action=="list") { Guard.Keys(m,"action");lock(sync) return new { ok=true,requests=requests.Values.OrderByDescending(r=>r.Expires).Take(32).Select(View).ToArray() }; }
   Guard.Keys(m,"action","requestId");var id=Guard.Text(m,"requestId");Guard.Require(action=="approve"||action=="deny","unknown_operator_action");
   lock(sync) {
-   Request r;Guard.Require(requests.TryGetValue(id,out r)&&r.Status=="pending"&&r.Expires>DateTime.UtcNow&&!busy,"approval_unavailable");
+   Request r;Guard.Require(requests.TryGetValue(id,out r)&&CanApprove(r,DateTime.UtcNow,busy),"approval_unavailable");
    var state=GetState();Guard.Require(state.Recovery=="clean"&&state.Current.Sha256==r.ExpectedCurrentSha256,"stale_approval");
    // One use: consume before audit and execution; errors never restore approval.
    r.Status=action=="deny"?"denied":"consumed";
@@ -164,14 +165,15 @@ public static class Host {
     Guard.Require(Guard.Hash(archive)==r.Sha256,"archive_integrity");Directory.CreateDirectory(root);
     using(var zip=ZipFile.OpenRead(archive)) { int total=0;foreach(var e in zip.Entries) {
      var prefix="webcore-CLI-"+r.Commit+"/";Guard.Require(e.FullName.StartsWith(prefix),"archive_prefix");var relative=e.FullName.Substring(prefix.Length);
+     if(relative.Length==0){Guard.Require(e.Length==0&&e.FullName.EndsWith("/"),"archive_root");continue;}
      if(relative.EndsWith("/")) continue;
      Guard.Require(relative.Split('/').All(p=>p.Length>0&&p!=".."&&p!=".")&&!relative.Contains("\\")&&!relative.Contains(":"),"archive_path");
      Guard.Require((e.ExternalAttributes>>16&0xF000)!=0xA000,"archive_symlink");
      if(!(relative.StartsWith("server/")||relative.StartsWith("test/")||new[]{"package.json","plugin.json","mcp.json",".mcp.json",".codex-plugin/plugin.json"}.Contains(relative))) continue;
      Guard.Require(e.Length<=1000000&&(total+=checked((int)e.Length))<=10000000,"expanded_limit");var path=Path.Combine(root,relative.Replace('/',Path.DirectorySeparatorChar));Directory.CreateDirectory(Path.GetDirectoryName(path));e.ExtractToFile(path,false);
     } }
-    var package=Guard.Parse(File.ReadAllText(Path.Combine(root,"package.json")));Guard.Require(!package.ContainsKey("dependencies")&&!package.ContainsKey("devDependencies"),"unsupported_dependencies");
-    var release=new Release{Commit=r.Commit,Sha256=r.Sha256,Root=root,Files=Directory.GetFiles(root,"*",SearchOption.AllDirectories).ToDictionary(p=>p.Substring(root.Length+1).Replace('\\','/'),Guard.Hash)};
+    var package=Guard.Parse(File.ReadAllText(Path.Combine(root,"package.json")));Guard.Require(!package.ContainsKey("dependencies")&&!package.ContainsKey("devDependencies"),"unsupported_dependencies");var scripts=package["scripts"] as System.Collections.Generic.Dictionary<string,object>;Guard.Require(scripts!=null&&Guard.Text(scripts,"test")=="node --test","unsupported_test_contract");
+    var release=new Release{Commit=r.Commit,Sha256=r.Sha256,Root=root,Version=Guard.Text(package,"version"),IsSnapshot=false,Files=Directory.GetFiles(root,"*",SearchOption.AllDirectories).ToDictionary(p=>p.Substring(root.Length+1).Replace('\\','/'),Guard.Hash)};
     Guard.Write(Path.Combine(c.Root,"catalog",r.Commit+".json"),release);Verify(release);
     var syntax=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_syntax_check",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);
     Guard.Require((bool)syntax["ok"],"staged_syntax_failed");var tests=Pipe.Call(WorkerPipe,exe,c.ExeSha256,new { action="validate",operation="run_webcore_tests",commit=r.Commit,sha256=r.Sha256 },145000,c.WorkerSid);

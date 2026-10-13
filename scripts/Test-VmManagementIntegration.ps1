@@ -70,8 +70,9 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $testCommit='c'*40;$release=Join-Path $root "releases\$testCommit";New-Item -ItemType Directory -Path $release|Out-Null
  [IO.File]::WriteAllText((Join-Path $release 'package.json'),'{"type":"module"}',[Text.UTF8Encoding]::new($false));New-Item -ItemType Directory -Path (Join-Path $release 'test')|Out-Null
  $test=@'
-import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import {spawn} from 'node:child_process';
-test('worker cannot read credentials or write immutable release',()=>{assert.throws(()=>fs.readFileSync('C:/ProgramData/SmartHome/VmManagement/recovery/canary.txt'));assert.throws(()=>fs.writeFileSync(new URL('../package.json',import.meta.url),'mutated'));});
+import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import net from 'node:net';import {spawn} from 'node:child_process';
+test('worker cannot read credentials or write immutable release',()=>{assert.throws(()=>fs.readFileSync('C:/ProgramData/SmartHome/VmManagement/recovery/canary.txt'));assert.throws(()=>fs.readdirSync('C:/ProgramData/SmartHome/VmManagement/audit'));assert.throws(()=>fs.writeFileSync(new URL('../package.json',import.meta.url),'mutated'));});
+test('operator pipe DACL denies actual worker',async()=>{await new Promise((resolve,reject)=>{const socket=net.connect('\\\\.\\pipe\\SmartHome-WebCoRE-Approval');const timer=setTimeout(()=>{socket.destroy();reject(new Error('pipe denial timeout'));},3000);socket.once('connect',()=>{clearTimeout(timer);socket.destroy();reject(new Error('unauthorized operator pipe'));});socket.once('error',()=>{clearTimeout(timer);resolve();});});});
 test('descendant containment',()=>{const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});fs.writeFileSync('C:/ProgramData/SmartHome/VmManagement/scratch/child-pid.txt',String(child.pid));child.unref();});
 '@
  [IO.File]::WriteAllText((Join-Path $release 'test\isolation.test.js'),$test,[Text.UTF8Encoding]::new($false))

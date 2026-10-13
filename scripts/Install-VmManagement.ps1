@@ -14,6 +14,7 @@ $PackageRoot=[IO.Path]::GetFullPath($PackageRoot)
 Set-StrictMode -Version Latest
 $Utf8=[Text.UTF8Encoding]::new($false)
 $WorkerName='SmartHomeVmWorker'
+$ApprovalShortcut=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Smart Home VM Approval.lnk'
 $BrokerTask='SmartHome-WebCoRE-Management'
 $WorkerTask='SmartHome-WebCoRE-Worker'
 $FirewallName='SmartHome-WebCoRE-Worker-NetworkDeny'
@@ -42,7 +43,7 @@ function Assert-Protected([string]$Path,[string]$ReaderSid){
  foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw 'Unprotected management input'}}}
 }
 function Export-Task([string]$Name){$scheduler=New-Object -ComObject 'Schedule.Service';$scheduler.Connect();[string]$scheduler.GetFolder('\').GetTask($Name).Xml}
-function Snapshot([string]$Source,[string]$Commit){
+function Snapshot([string]$Source,[string]$Commit,[switch]$IsSnapshot){
  Assert-NoReparse $Source
  $destination=Join-Path $Root "releases\$Commit"
  if(Test-Path -LiteralPath $destination){throw 'Release destination already exists'}
@@ -53,7 +54,8 @@ function Snapshot([string]$Source,[string]$Commit){
  $files=[ordered]@{}
  Get-ChildItem -LiteralPath $destination -Recurse -File | Sort-Object FullName | ForEach-Object{$files[$_.FullName.Substring($destination.Length+1).Replace('\','/')]=Hash $_.FullName}
  $digest=Text-Hash ($files|ConvertTo-Json -Compress)
- $release=@{Commit=$Commit;Sha256=$digest;Root=$destination;Files=$files}
+ $version=(Get-Content (Join-Path $destination 'package.json') -Raw|ConvertFrom-Json).version
+ $release=@{Commit=$Commit;Sha256=$digest;Root=$destination;Files=$files;Version=$version;IsSnapshot=[bool]$IsSnapshot}
  Write-Json (Join-Path $Root "catalog\$Commit.json") $release
  return $release
 }
@@ -107,6 +109,7 @@ if($Mode -in @('Verify','Recover','Uninstall')){
  if($text.Contains($Root)-or $text.Contains($Root.Replace('\','\\'))){throw 'Restore and verify original runtime with Recover before uninstall'}
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
+ if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
  [SmartHomeWorkerRights]::Apply($cfg.WorkerSid,$true)
  Remove-LocalUser -Name $WorkerName
  Write-Output 'Management tasks, firewall rule and worker account removed. Protected audit/recovery inventory retained; no live MCP/watchdog task removed.'
@@ -152,6 +155,7 @@ Assert-Protected $tunnelExe
 if(@(Get-NetFirewallProfile|Where-Object Enabled -ne $true).Count){throw 'Firewall must be enabled on all profiles'}
 if(Get-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue){throw 'Worker account already exists without a verified installation'}
 if(Test-Path -LiteralPath $Root){throw 'Partial installation exists; inspect/recover before retry, never overwrite'}
+if(Test-Path -LiteralPath $ApprovalShortcut){throw 'Approval shortcut already exists without a verified installation'}
 Write-Output 'PREFLIGHT PASS: pinned package verified; existing SYSTEM identity retained; no production changes made.'
 if($Mode -eq 'Preflight'){exit 0}
 if($Activate){throw 'Initial activation is a separate approved release cutover through the broker; Install never restarts production'}
@@ -171,10 +175,10 @@ try{
  Protect (Join-Path $Root 'audit') $null
  Protect (Join-Path $Root 'recovery') $null
  Protect (Join-Path $Root 'downloads') $null
- Copy-Item -LiteralPath (Join-Path $PackageRoot 'bin\VmManagement.exe') -Destination (Join-Path $Root 'bin\VmManagement.exe')
+ foreach($binary in @('VmManagement.exe','VmManagementApprove.exe')){Copy-Item -LiteralPath (Join-Path $PackageRoot "bin\$binary") -Destination (Join-Path $Root "bin\$binary")}
  Copy-Item -LiteralPath $NodePath -Destination (Join-Path $Root 'bin\node.exe')
  $baselineCommit=(Text-Hash $paths[0]).Substring(0,40)
- $baseline=Snapshot $originalRoot $baselineCommit
+ $baseline=Snapshot $originalRoot $baselineCommit -IsSnapshot
  $candidate=Snapshot $PackageRoot $manifest.Commit
  Copy-Item -LiteralPath $TunnelConfigPath -Destination (Join-Path $Root 'recovery\original-tunnel.yaml')
  [IO.File]::WriteAllText((Join-Path $Root 'recovery\original-mcp-task.xml'),$mcpXml,$Utf8)
@@ -197,12 +201,14 @@ try{
  for($attempt=0;$attempt -lt 15;$attempt++){if((Get-ScheduledTask -TaskName $WorkerTask).State -eq 'Running' -and (Get-ScheduledTask -TaskName $BrokerTask).State -eq 'Running'){break};Start-Sleep -Seconds 1}
  if((Get-ScheduledTask -TaskName $WorkerTask).State -ne 'Running' -or (Get-ScheduledTask -TaskName $BrokerTask).State -ne 'Running'){throw 'New management tasks failed to start; no production cutover occurred'}
  if((Hash $TunnelConfigPath)-ne $cfg.InitialConfigSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-MCP'))-ne $cfg.McpTaskXmlSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-Watchdog'))-ne $cfg.WatchdogTaskXmlSha256){throw 'Existing runtime preservation check failed'}
+ $shell=New-Object -ComObject WScript.Shell;$shortcut=$shell.CreateShortcut($ApprovalShortcut);$shortcut.TargetPath=Join-Path $Root 'bin\VmManagementApprove.exe';$shortcut.WorkingDirectory=Join-Path $Root 'bin';$shortcut.Description='Independent scoped approvals for Smart Home VM management';$shortcut.Save()
  Existing-Verify
  Write-Output "INSTALL PASS: boundary provisioned; production not cut over. Candidate commit: $($candidate.Commit); manifest SHA-256: $($candidate.Sha256). Use independent operator approval for activation."
 }catch{
  # Never scatter repairs across existing service/tunnel. Remove only new task/account/rule on failure.
  foreach($name in @($BrokerTask,$WorkerTask)){Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue;Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue}
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
+ if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
  if($created){try{[SmartHomeWorkerRights]::Apply($WorkerSid,$true)}catch{};Remove-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue}
  throw
 }

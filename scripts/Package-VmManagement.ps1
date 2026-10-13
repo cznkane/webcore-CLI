@@ -11,7 +11,7 @@ foreach($file in @('package.json','plugin.json','mcp.json','.mcp.json')){Copy-It
 New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'scripts')|Out-Null
 foreach($script in @('Install-VmManagement.ps1','VmWorkerRights.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $script) -Destination (Join-Path $OutputDirectory 'scripts')}
 New-Item -ItemType Directory -Path (Join-Path $OutputDirectory 'bin')|Out-Null
-Copy-Item -LiteralPath (Join-Path $source 'build\vm-management\VmManagement.exe') -Destination (Join-Path $OutputDirectory 'bin')
+foreach($binary in @('VmManagement.exe','VmManagementApprove.exe')){Copy-Item -LiteralPath (Join-Path $source "build\vm-management\$binary") -Destination (Join-Path $OutputDirectory 'bin')}
 $files=[ordered]@{}
 Get-ChildItem -LiteralPath $OutputDirectory -Recurse -Force -File|Sort-Object FullName|ForEach-Object{$files[$_.FullName.Substring($OutputDirectory.Length+1).Replace('\','/')]=(Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()}
 [IO.File]::WriteAllText((Join-Path $OutputDirectory 'vm-package-manifest.json'),(@{Commit=$Commit;Files=$files}|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))

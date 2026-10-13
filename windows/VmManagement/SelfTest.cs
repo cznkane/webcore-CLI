@@ -16,6 +16,7 @@ public static class SelfTest {
   var sid=WindowsIdentity.GetCurrent().User.Value;var exe=Assembly.GetExecutingAssembly().Location;var hash=Guard.Hash(exe);
   Denied(()=>Guard.Full(@"C:\safe\..\escape"),"path_traversal");Denied(()=>Guard.Full(@"\\server\share"),"unc_path");Denied(()=>Guard.Full(@"C:\safe\file:stream"),"alternate_stream");
   Denied(()=>Guard.Keys(Guard.Parse("{\"action\":\"health\",\"command\":\"whoami\"}"),"action"),"extra_command");Check(!Host.Operations.Contains("powershell"),"no_shell_operation");
+  var now=DateTime.UtcNow;var approval=new Request{Status="pending",Expires=now.AddMinutes(1)};Check(Host.CanApprove(approval,now,false),"scoped_pending_approval");Check(!Host.CanApprove(approval,now,true),"approval_concurrency");approval.Expires=now.AddSeconds(-1);Check(!Host.CanApprove(approval,now,false),"expired_approval");approval.Expires=now.AddMinutes(1);approval.Status="consumed";Check(!Host.CanApprove(approval,now,false),"consumed_approval");
   using(var pipe=Pipe.Server("SmartHome-WebCoRE-Selftest",sid)) {
    Denied(()=>{using(var duplicate=Pipe.Server("SmartHome-WebCoRE-Selftest",sid)){}},"first_instance");
    string peer=null;var t=new Thread(()=>{pipe.WaitForConnection();Pipe.Receive(pipe);peer=Pipe.Peer(pipe,exe,hash);Pipe.Send(pipe,new {ok=true});pipe.Disconnect();});t.Start();
