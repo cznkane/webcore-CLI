@@ -159,7 +159,7 @@ if(-not $TunnelConfigPath){
 }
 Assert-Protected $TunnelConfigPath
 $yaml=[IO.File]::ReadAllText($TunnelConfigPath).Replace('\\','\')
-$paths=@([regex]::Matches($yaml,'[A-Za-z]:\\[^"\r\n]*?\\server\\index\.js')|ForEach-Object Value|Select-Object -Unique)
+$paths=@([regex]::Matches($yaml,'[A-Za-z]:\\[^"\r\n:]*?\\server\\index\.js')|ForEach-Object Value|Select-Object -Unique)
 if($paths.Count -ne 1){throw 'Unique current MCP payload path not established'}
 $originalRoot=Split-Path (Split-Path $paths[0] -Parent) -Parent
 Assert-Protected $originalRoot
@@ -178,7 +178,7 @@ Write-Output 'PREFLIGHT PASS: pinned package verified; existing SYSTEM identity 
 if($Mode -eq 'Preflight'){exit 0}
 if($Activate){throw 'Initial activation is a separate approved release cutover through the broker; Install never restarts production'}
 # Installation provisions only the boundary. Existing tunnel, watchdog and credentials stay byte-identical.
-$created=$false;$createdRoot=$false;$cfg=$null
+$created=$false;$createdRoot=$false;$cfg=$null;$initialConfigSha256=Hash $TunnelConfigPath
 try{
  $random=New-Object byte[] 48;$rng=[Security.Cryptography.RandomNumberGenerator]::Create();$rng.GetBytes($random);$rng.Dispose()
  $password=[Convert]::ToBase64String($random)+'aA1!'
@@ -228,6 +228,6 @@ try{
  Remove-NetFirewallRule -Name $FirewallName -ErrorAction SilentlyContinue
  if(Test-Path -LiteralPath $ApprovalShortcut){Remove-Item -LiteralPath $ApprovalShortcut}
  if($created){try{[SmartHomeWorkerRights]::Apply($WorkerSid,$true)}catch{};Remove-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue}
- if($createdRoot -and $null -ne $cfg -and (Test-Path -LiteralPath $Root) -and (Hash $TunnelConfigPath) -eq $cfg.InitialConfigSha256 -and @(Get-ChildItem -LiteralPath (Join-Path $Root 'audit') -File -ErrorAction SilentlyContinue).Count -eq 0){try{Get-ChildItem -LiteralPath $Root -Recurse -Force|ForEach-Object{Assert-NoReparse $_.FullName};Remove-Item -LiteralPath $Root -Recurse -Force}catch{Write-Warning 'Protected partial-install inventory retained for review'}}
+ if($createdRoot -and (Test-Path -LiteralPath $Root) -and (Hash $TunnelConfigPath) -eq $initialConfigSha256 -and @(Get-ChildItem -LiteralPath (Join-Path $Root 'audit') -File -ErrorAction SilentlyContinue).Count -eq 0){try{Get-ChildItem -LiteralPath $Root -Recurse -Force|ForEach-Object{Assert-NoReparse $_.FullName};Remove-Item -LiteralPath $Root -Recurse -Force}catch{Write-Warning 'Protected partial-install inventory retained for review'}}
  throw
 }
