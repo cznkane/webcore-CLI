@@ -7,3 +7,4 @@ config.json
 language-state/
 *.local.json
 .DS_Store
+build/
