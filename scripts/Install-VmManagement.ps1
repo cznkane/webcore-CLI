@@ -128,7 +128,9 @@ if($Mode -in @('Verify','Recover','Uninstall')){
   Disable-ScheduledTask -TaskName $BrokerTask|Out-Null
   Stop-ScheduledTask -TaskName $WorkerTask -ErrorAction SilentlyContinue
   Disable-ScheduledTask -TaskName $WorkerTask|Out-Null
-  $watchdog=Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog';$enabled=$watchdog.Settings.Enabled
+  $watchdog=Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog'
+  $recoveryState=Get-Content -LiteralPath (Join-Path $Root 'state.json') -Raw|ConvertFrom-Json
+  if($recoveryState.Recovery -eq 'clean' -and (Hash $cfg.TunnelConfig) -eq $cfg.InitialConfigSha256 -and (Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State -eq 'Running' -and $watchdog.Settings.Enabled){Write-Output 'Original runtime already selected; management tasks disabled without restarting MCP.';exit 0}
   try{
    Disable-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog' | Out-Null
    Stop-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP'
@@ -139,9 +141,12 @@ if($Mode -in @('Verify','Recover','Uninstall')){
    [IO.File]::WriteAllBytes($cfg.TunnelConfig,[IO.File]::ReadAllBytes($backup))
    Start-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP'
    Write-Output 'Original configuration restored. Broker remains stopped. Verify the original MCP read path in a fresh chat before any further work.'
-  }finally{if($enabled){Enable-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog'|Out-Null}}
+  }finally{Enable-ScheduledTask -TaskName 'SmartHome-WebCoRE-Watchdog'|Out-Null}
   exit 0
  }
+ # Uninstall only after recovery has disabled management; do not race an approved cutover.
+ $broker=Get-ScheduledTask -TaskName $BrokerTask -ErrorAction SilentlyContinue
+ if($null -ne $broker -and $broker.Settings.Enabled){throw 'Run Recover and verify the original runtime before uninstall'}
  # Uninstall retains protected audit and recovery files; never remove an active payload.
  $text=Get-Content -LiteralPath $cfg.TunnelConfig -Raw
  if($text.Contains($Root)-or $text.Contains($Root.Replace('\','\\'))){throw 'Restore and verify original runtime with Recover before uninstall'}
