@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { runManagementReadOnly, managementToolNames, runManagementTest, managementTestToolNames } from './windows-management.js';
+import { runManagementReadOnly, managementToolNames } from './windows-management.js';
 import { createInterface } from 'node:readline';
 import { loadConfig } from './config.js';
 import { WebcoreClient } from './client.js';
@@ -16,7 +16,6 @@ let currentClient;
 let currentConfigHash;
 
 const tools = [
-  ...managementTestToolNames.map(name => ({ name, annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, description: 'Opt-in, explicitly approved fixed npm test/check operation on Windows VM. No arbitrary commands.', inputSchema: { type: 'object', properties: { confirm: { type: 'boolean' } }, required: ['confirm'], additionalProperties: false } })),
   ...managementToolNames.map(name => ({ name, annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Opt-in Windows VM read-only diagnostic; fixed allowlisted script, structured bounded output, no arbitrary command execution.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } })),
   { name: 'hubitat_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices explicitly authorized to the configured Hubitat Maker API instance. Read-only; does not execute device commands.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
 
@@ -41,7 +40,6 @@ const tools = [
 ];
 
 async function invoke(name, a) {
-  if (managementTestToolNames.includes(name)) return runManagementTest(name, a);
   if (managementToolNames.includes(name)) return runManagementReadOnly(name);
   const config = await loadConfig();
   if (!config) throw new Error('Not configured. First ask whether webCoRE runs on Hubitat and where the local hub is. Find the local execute endpoint at Hubitat > Apps > webCoRE > choose any piston > Test run piston. Prefer local access; only offer the Hubitat Cloud URL as a fallback after explaining it is not local and getting explicit confirmation. Then run `node server/cli.js setup` from the plugin folder.');
