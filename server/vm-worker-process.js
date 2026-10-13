@@ -13,7 +13,7 @@ export async function runFixedNodeOperation({ executable, args, cwd, timeoutMs =
     (args.length === 2 && args[0] === '--check' && args[1] === 'server/index.js')
   );
   if (!validArgs) throw new Error('Unapproved Node arguments.');
-  if (typeof cwd !== 'string' || !win32.isAbsolute(cwd) || !/^[A-Za-z]:/.test(cwd) || /["\\r\\n]/.test(cwd)) throw new Error('Absolute Windows working directory required.');
+  if (typeof cwd !== 'string' || !win32.isAbsolute(cwd) || !/^[A-Za-z]:/.test(cwd) || cwd.includes('"') || cwd.includes(String.fromCharCode(10)) || cwd.includes(String.fromCharCode(13))) throw new Error('Absolute Windows working directory required.');
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error('Invalid timeout.');
   return await new Promise((resolve, reject) => {
     const child = spawnProcess(executable, args, {
