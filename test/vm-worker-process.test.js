@@ -3,11 +3,13 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { runFixedNodeOperation } from '../server/vm-worker-process.js';
 
-const base = { executable: 'C:\\TrustedNode\\node.exe', args: ['--test'], cwd: 'C:\\TrustedRelease' };
+const base = { executable: 'C:\\TrustedNode\\node.exe', args: ['--test'], cwd: 'C:\\TrustedRelease', expectedExecutable: 'C:\\TrustedNode\\node.exe' };
 test('fixed Node execution rejects arbitrary commands and flags', async () => {
   for (const invalid of [
     { ...base, executable: 'powershell.exe' },
     { ...base, executable: 'node.exe' },
+    { ...base, expectedExecutable: 'C:\\OtherNode\\node.exe' },
+    { ...base, expectedExecutable: undefined },
     { ...base, executable: 'C:\\Untrusted\\other.exe' },
     { ...base, args: ['--eval', 'process.exit()'] },
     { ...base, args: ['--check', '../outside.js'] },
