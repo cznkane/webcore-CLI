@@ -1,14 +1,32 @@
 name: Validate webcore-CLI
 on:
   push:
+    branches: [main]
   pull_request:
+concurrency:
+  group: validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
-  test:
+  management:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: npm test
+      - name: Windows management focused tests
+        run: node --test test/windows-management.test.js
+        timeout-minutes: 2
       - run: npm run check
+  full-suite:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Full suite
+        run: npm test
+        timeout-minutes: 7
