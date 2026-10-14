@@ -31,6 +31,14 @@ public static class SelfTest {
   var node=Environment.GetEnvironmentVariable("SMART_HOME_TEST_NODE");Guard.Require(!String.IsNullOrEmpty(node),"test_node_required");
   var root=Path.Combine(Path.GetTempPath(),"SmartHomeNative-"+Guard.Id());Directory.CreateDirectory(root);
   try {
+   var publicFile=Path.Combine(root,"public-runtime.txt");File.WriteAllText(publicFile,"not-secret");
+   var publicAcl=new FileSecurity();publicAcl.SetAccessRuleProtection(true,false);publicAcl.SetOwner(new SecurityIdentifier("S-1-5-32-544"));
+   foreach(var owner in new[]{"S-1-5-18","S-1-5-32-544"})publicAcl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(owner),FileSystemRights.FullControl,AccessControlType.Allow));
+   publicAcl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-11"),FileSystemRights.ReadAndExecute,AccessControlType.Allow));File.SetAccessControl(publicFile,publicAcl);
+   Guard.ProtectedRuntime(publicFile);Check(true,"public_runtime_readers_allowed");
+   Denied(()=>Guard.Protected(publicFile),"confidential_input_readers_rejected");
+   publicAcl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier("S-1-5-11"),FileSystemRights.Modify,AccessControlType.Allow));File.SetAccessControl(publicFile,publicAcl);
+   Denied(()=>Guard.ProtectedRuntime(publicFile),"public_runtime_writers_rejected");
    File.WriteAllText(Path.Combine(root,"package.json"),"{\"type\":\"module\"}");
    var pidFile=Path.Combine(root,"child.pid");var pidLiteral=Guard.Json.Serialize(pidFile);
    var fixture="import {spawn} from 'node:child_process';import fs from 'node:fs';const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{detached:true,stdio:'ignore'});fs.writeFileSync("+pidLiteral+",String(c.pid));c.unref();";

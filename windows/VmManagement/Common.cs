@@ -24,7 +24,9 @@ public static class Guard {
  public static string Id() { var b=new byte[24]; using(var rng=RandomNumberGenerator.Create()) rng.GetBytes(b); return BitConverter.ToString(b).Replace("-", "").ToLowerInvariant(); }
  public static string Full(string path) { Require(!String.IsNullOrEmpty(path)&&Regex.IsMatch(path,@"\A[A-Za-z]:\\")&&!path.Substring(2).Contains(":")&&!path.Contains("\""),"invalid_path"); var f=Path.GetFullPath(path); Require(String.Equals(f.TrimEnd('\\'),path.TrimEnd('\\'),StringComparison.OrdinalIgnoreCase),"noncanonical_path"); return f; }
  public static void NoReparse(string path) { var p=Full(path); while(!String.IsNullOrEmpty(p)) { Require((File.GetAttributes(p)&FileAttributes.ReparsePoint)==0,"reparse_rejected"); p=Path.GetDirectoryName(p); } }
- public static void Protected(string path, string readerSid=null) {
+ public static void Protected(string path,string readerSid=null) { ProtectedInput(path,readerSid,false); }
+ public static void ProtectedRuntime(string path) { ProtectedInput(path,null,true); }
+ static void ProtectedInput(string path,string readerSid,bool publicRead) {
   NoReparse(path);
   FileSystemSecurity acl=Directory.Exists(path)?(FileSystemSecurity)Directory.GetAccessControl(path):File.GetAccessControl(path);
   var owner=(SecurityIdentifier)acl.GetOwner(typeof(SecurityIdentifier));
@@ -33,9 +35,9 @@ public static class Guard {
    if(r.AccessControlType!=AccessControlType.Allow) continue;
    var sid=((SecurityIdentifier)r.IdentityReference).Value;
    if(sid=="S-1-5-18"||sid=="S-1-5-32-544") continue;
-   var write=FileSystemRights.Write|FileSystemRights.Delete|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership|FileSystemRights.DeleteSubdirectoriesAndFiles;
+   var write=FileSystemRights.Write|FileSystemRights.Delete|FileSystemRights.ChangePermissions|FileSystemRights.TakeOwnership|FileSystemRights.DeleteSubdirectoriesAndFiles|(FileSystemRights)0x40000000|(FileSystemRights)0x10000000;
    Require((r.FileSystemRights&write)==0,"mutable_path");
-   Require(readerSid!=null&&sid==readerSid,"unexpected_reader");
+   Require(publicRead||(readerSid!=null&&sid==readerSid),"unexpected_reader");
   }
  }
  public static Dictionary<string,object> Parse(string text) { var v=Json.DeserializeObject(text) as Dictionary<string,object>; Require(v!=null,"invalid_object"); return v; }

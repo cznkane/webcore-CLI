@@ -2,7 +2,7 @@
 #Requires -RunAsAdministrator
 [CmdletBinding()]
 param(
- [ValidateSet('Preflight','Install','Verify','Recover','Uninstall')][string]$Mode='Preflight',
+ [ValidateSet('Preflight','HardenRuntime','Install','Verify','Recover','Uninstall')][string]$Mode='Preflight',
  [string]$PackageRoot=(Split-Path $PSScriptRoot -Parent),
  [string]$TunnelConfigPath,
  [string]$NodePath='C:\Program Files\nodejs\node.exe',
@@ -38,18 +38,98 @@ function Assert-Protected([string]$Path,[string]$ReaderSid){
  $acl=Get-Acl -LiteralPath $Path
  $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
  if($owner -notin @('S-1-5-18','S-1-5-32-544')){throw 'Untrusted file owner'}
- $write=[Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
- foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw 'Unprotected management input'}}}
+ $write=([int][Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 1073741824 -bor 268435456
+ foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw ('Unprotected management input: '+$Path)}}}
 }
 function Assert-ImmutableParents([string]$Path){
  $cursor=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
  $installerSid=([Security.Principal.NTAccount]::new('NT SERVICE','TrustedInstaller')).Translate([Security.Principal.SecurityIdentifier]).Value
  $trusted=@('S-1-5-18','S-1-5-32-544',$installerSid)
- $danger=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
+ $danger=([int][Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 268435456
  while($cursor){$acl=Get-Acl -LiteralPath $cursor;$owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;if($owner -notin $trusted){throw 'Untrusted ancestor ownership'}
   foreach($ace in $acl.Access){if(($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)-ne 0){continue};$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and ($ace.FileSystemRights -band $danger)-ne 0){throw 'Mutable ancestor permits protected-source replacement'}}
   $cursor=[IO.Path]::GetDirectoryName($cursor)
  }
+}
+function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
+ if(-not $RuntimeRoot.StartsWith('C:\SmartHome\',[StringComparison]::OrdinalIgnoreCase) -or -not $TunnelExecutable.StartsWith('C:\SmartHome\',[StringComparison]::OrdinalIgnoreCase)){throw 'Hardening scope requires existing C:\SmartHome runtime'}
+ $trusted=@('S-1-5-18','S-1-5-32-544')
+ $write=([int][Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 1073741824 -bor 268435456
+ $danger=([int][Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 268435456
+ $scope=@($RuntimeRoot)+@(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -Force | ForEach-Object FullName)+@($TunnelExecutable)
+ $parents=@()
+ foreach($leaf in @($RuntimeRoot,$TunnelExecutable)){
+  $cursor=[IO.Path]::GetDirectoryName($leaf)
+  while($cursor -and $cursor -ne 'C:\'){$parents+=$cursor;$cursor=[IO.Path]::GetDirectoryName($cursor)}
+ }
+ $all=@(($scope+$parents)|Select-Object -Unique)
+ $backup=@();$plans=@();$hashes=@{}
+ foreach($path in $all){
+  Assert-NoReparse $path
+  $acl=Get-Acl -LiteralPath $path
+  $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+  if($owner -notin $trusted){throw 'Untrusted runtime/ancestor owner; review before changing permissions'}
+  $backup+=@{Path=$path;Sddl=$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner,Group,Access')}
+  $target=$path -in $scope
+  if(Test-Path -LiteralPath $path -PathType Leaf){$hashes[$path]=Hash $path}
+  $needsChange=@($acl.Access | Where-Object {
+   $sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+   $_.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and
+   (($target -and ($_.FileSystemRights -band $write) -ne 0) -or
+    (-not $target -and ($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and ($_.FileSystemRights -band $danger) -ne 0))
+  }).Count -gt 0
+  if(-not $needsChange){continue}
+  if(@($acl.Access | Where-Object AccessControlType -eq 'Deny').Count){throw 'Existing deny permissions require a reviewed hardening plan'}
+  # Rewrite a complete DACL: inherited ACEs cannot be reliably removed in memory before persistence.
+  $sections=[Security.AccessControl.AccessControlSections]'Owner,Group,Access'
+  $raw=[Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorSddlForm($sections))
+  $rewritten=[Security.AccessControl.RawAcl]::new($raw.DiscretionaryAcl.Revision,$raw.DiscretionaryAcl.Count*2)
+  foreach($ace in $raw.DiscretionaryAcl){
+   $ace.AceFlags=[Security.AccessControl.AceFlags]([int]$ace.AceFlags -band (255 -bxor [int][Security.AccessControl.AceFlags]::Inherited))
+   $qualified=$ace -is [Security.AccessControl.QualifiedAce]
+   $foreign=$qualified -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $ace.SecurityIdentifier.Value -notin $trusted
+   if($target -and $foreign -and ($ace.AccessMask -band $write) -ne 0){
+    $ace.AccessMask=[int][Security.AccessControl.FileSystemRights]'ReadAndExecute,Synchronize'
+   }elseif(-not $target -and $foreign -and ([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and ($ace.AccessMask -band $danger) -ne 0){
+    # Keep the original writer mask for unrelated descendants, but remove replacement rights on this parent.
+    $inheritMask=[Security.AccessControl.AceFlags]'ContainerInherit,ObjectInherit'
+    if(([int]$ace.AceFlags -band [int]$inheritMask) -ne 0){
+     $bytes=New-Object byte[] $ace.BinaryLength;$ace.GetBinaryForm($bytes,0)
+     $childAce=[Security.AccessControl.GenericAce]::CreateFromBinaryForm($bytes,0)
+     $childAce.AceFlags=[Security.AccessControl.AceFlags]([int]$childAce.AceFlags -bor [int][Security.AccessControl.AceFlags]::InheritOnly)
+     $rewritten.InsertAce($rewritten.Count,$childAce)
+    }
+    $ace.AceFlags=[Security.AccessControl.AceFlags]::None
+    $parentMask=[int]$ace.AccessMask
+    if(($parentMask -band 268435456) -ne 0){$parentMask=($parentMask -band (-bnot 268435456)) -bor [int][Security.AccessControl.FileSystemRights]::FullControl}
+    $ace.AccessMask=$parentMask -band (-bnot $danger)
+   }
+   $rewritten.InsertAce($rewritten.Count,$ace)
+  }
+  $raw.DiscretionaryAcl=$rewritten
+  $raw.SetFlags([Security.AccessControl.ControlFlags]([int]$raw.ControlFlags -bor [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))
+  $acl.SetSecurityDescriptorSddlForm($raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access),[Security.AccessControl.AccessControlSections]::Access)
+  $plans+=@{Path=$path;Acl=$acl;Target=$target}
+ }
+ $backupPath=Join-Path (Split-Path $PackageRoot -Parent) ('runtime-acl-before-'+[Guid]::NewGuid().ToString('N')+'.json')
+ Write-Json $backupPath @{Created=[DateTime]::UtcNow.ToString('o');Purpose='Explicit runtime permission hardening';Entries=$backup}
+ Protect $backupPath $null
+ try{
+  # Seal deepest targets first; parent inheritance cannot reintroduce writable ACEs.
+  foreach($plan in @($plans | Sort-Object @{Expression={$_.Path.Length};Descending=$true})){Set-Acl -LiteralPath $plan.Path -AclObject $plan.Acl}
+  foreach($path in $scope){Assert-Protected $path}
+  foreach($path in $hashes.Keys){if((Hash $path) -ne $hashes[$path]){throw 'Runtime content changed during permission hardening'}}
+ }catch{
+  $failure=$_
+  # Restore known pre-change ACLs on failure. Never silently leave a partial hardening operation.
+  $restoreFailed=$false
+  foreach($entry in @($backup | Sort-Object @{Expression={$_.Path.Length}})){
+   try{$restore=Get-Acl -LiteralPath $entry.Path;$restore.SetSecurityDescriptorSddlForm($entry.Sddl,[Security.AccessControl.AccessControlSections]::Access);Set-Acl -LiteralPath $entry.Path -AclObject $restore}catch{$restoreFailed=$true}
+  }
+  if($restoreFailed){throw "Permission restoration incomplete; preserve protected backup: $backupPath"}
+  throw $failure
+ }
+ Write-Output "Runtime permission backup: $backupPath"
 }
 function Remove-WorkerIdentity([string]$Sid){
  $canonicalSid=([Security.Principal.SecurityIdentifier]::new($Sid)).Value
@@ -201,9 +281,9 @@ $commandPath=[IO.Path]::GetFullPath($commandText.Replace('\\','\').Replace('/','
 $commandEncoding=if($commandText.Contains('\\')){'escaped'}elseif($commandText.Contains('/')){'forward'}else{'backslash'}
 $entryPoint=if([IO.Path]::GetFileName($commandPath) -eq 'windows-readonly-launcher.cjs'){'windows-readonly-launcher.cjs'}else{'server/index.js'}
 $originalRoot=if($entryPoint -eq 'server/index.js'){Split-Path (Split-Path $commandPath -Parent) -Parent}else{Split-Path $commandPath -Parent}
-Assert-Protected $originalRoot
-Assert-Protected $commandPath
-Assert-ImmutableParents $commandPath
+Assert-NoReparse $originalRoot
+Assert-NoReparse $commandPath
+if($Mode -ne 'HardenRuntime'){Assert-Protected $originalRoot;Assert-Protected $commandPath;Assert-ImmutableParents $commandPath}
 if($entryPoint -eq 'windows-readonly-launcher.cjs'){
  # Only the reviewed, fixed environment-enabling wrapper is supported, never arbitrary code.
  $wrapper=[IO.File]::ReadAllText($commandPath)
@@ -223,15 +303,29 @@ $matched=@($nodes | Where-Object {
 })
 if($nodes.Count -ne 1 -or $matched.Count -ne 1){throw 'Running MCP payload does not match active task configuration'}
 Assert-Protected $NodePath
-$version=& $NodePath --version
-if($LASTEXITCODE -ne 0 -or $version -notmatch '^v24\.'){throw 'Pinned Node.js 24 required'}
+if($Mode -ne 'HardenRuntime'){
+ Assert-ImmutableParents $NodePath
+ $version=& $NodePath --version
+ if($LASTEXITCODE -ne 0 -or $version -notmatch '^v24\.'){throw 'Pinned Node.js 24 required'}
+}
 $tunnelExe=[string]$mcp.Actions[0].Execute
 if([IO.Path]::GetFileName($tunnelExe)-ne 'tunnel-client.exe'){throw 'Unexpected MCP launcher; review task action before installing'}
-Assert-Protected $tunnelExe
+if($Mode -ne 'HardenRuntime'){Assert-Protected $tunnelExe;Assert-ImmutableParents $tunnelExe}
+if($Mode -ne 'HardenRuntime'){Assert-ImmutableParents $NodePath}
 if(@(Get-NetFirewallProfile|Where-Object Enabled -ne $true).Count){throw 'Firewall must be enabled on all profiles'}
 if(Get-LocalUser -Name $WorkerName -ErrorAction SilentlyContinue){throw 'Worker account already exists without a verified installation'}
 if(Test-Path -LiteralPath $Root){throw 'Partial installation exists; inspect/recover before retry, never overwrite'}
 if(Test-Path -LiteralPath $ApprovalShortcut){throw 'Approval shortcut already exists without a verified installation'}
+if($Mode -eq 'HardenRuntime'){
+ $runtimeConfigHash=Hash $TunnelConfigPath
+ Harden-Runtime $originalRoot $tunnelExe
+ if((Hash $TunnelConfigPath) -ne $runtimeConfigHash){throw 'Configuration drift during permission hardening'}
+ if((Text-Hash (Export-Task 'SmartHome-WebCoRE-MCP')) -ne (Text-Hash $mcpXml) -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-Watchdog')) -ne (Text-Hash $watchdogXml)){throw 'Task drift during permission hardening'}
+ Assert-Protected $originalRoot;Assert-Protected $commandPath;Assert-Protected $tunnelExe
+ Assert-ImmutableParents $commandPath;Assert-ImmutableParents $tunnelExe;Assert-ImmutableParents $NodePath
+ Write-Output 'RUNTIME ACL PASS: immutable public code; protected backup retained; no content, task, credential or process changes.'
+ exit 0
+}
 Write-Output 'PREFLIGHT PASS: pinned package verified; existing SYSTEM identity retained; no production changes made.'
 if($Mode -eq 'Preflight'){exit 0}
 if($Activate){throw 'Initial activation is a separate approved release cutover through the broker; Install never restarts production'}
