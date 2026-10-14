@@ -22,6 +22,10 @@ public static class SelfTest {
   Check(Host.CommandMatches("node \"C:/runtime/windows-readonly-launcher.cjs\"",pointer),"forward_wrapper_command");
   Check(!Host.CommandMatches("node \"C:/runtime/windows-readonly-launcher.cjs\" --eval unapproved",pointer),"extra_command_args_rejected");
   var now=DateTime.UtcNow;var approval=new Request{Status="pending",Expires=now.AddMinutes(1)};Check(Host.CanApprove(approval,now,false),"scoped_pending_approval");Check(!Host.CanApprove(approval,now,true),"approval_concurrency");approval.Expires=now.AddSeconds(-1);Check(!Host.CanApprove(approval,now,false),"expired_approval");approval.Expires=now.AddMinutes(1);approval.Status="consumed";Check(!Host.CanApprove(approval,now,false),"consumed_approval");
+  var view=Guard.Parse(Guard.Json.Serialize(new{operation="deploy_release",status="succeeded",requestId=new string('a',48),commit=new string('b',40),sha256=new string('c',64),expectedCurrentSha256=new string('d',64),expiresAt="2030-01-01T00:00:00Z",result=new{ok=true}}));
+  var details=Host.ApprovalDetails(view);
+  Check(details.Contains("status: succeeded")&&details.Contains("sha256: "+new string('c',64)),"readable_approval_status_and_digest");
+  Check(details.Contains("expectedCurrentSha256: "+new string('d',64))&&details.Contains("requestId: "+new string('a',48)),"readable_approval_preserves_complete_scope");
   using(var pipe=Pipe.Server("SmartHome-WebCoRE-Selftest",sid)) {
    Denied(()=>{using(var duplicate=Pipe.Server("SmartHome-WebCoRE-Selftest",sid)){}},"first_instance");
    string peer=null;var t=new Thread(()=>{pipe.WaitForConnection();Pipe.Receive(pipe);peer=Pipe.Peer(pipe,exe,hash);Pipe.Send(pipe,new {ok=true});pipe.Disconnect();});t.Start();

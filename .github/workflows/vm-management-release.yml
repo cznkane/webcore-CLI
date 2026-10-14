@@ -1,0 +1,74 @@
+name: Prepare VM management draft release
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact reviewed 40-character commit reachable from main
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      RELEASE_COMMIT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require canonical source
+        shell: powershell
+        run: |
+          if ($env:RELEASE_COMMIT -cnotmatch '\A[a-f0-9]{40}\z') { throw 'Exact commit required' }
+          git merge-base --is-ancestor $env:RELEASE_COMMIT origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Release commit is not merged canonical source' }
+          git checkout --detach $env:RELEASE_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned checkout failed' }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate native boundary and Windows integration
+        shell: powershell
+        run: |
+          npm.cmd run check
+          if ($LASTEXITCODE -ne 0) { throw 'Syntax validation failed' }
+          ./scripts/Build-VmManagement.ps1
+          $env:SMART_HOME_TEST_NODE = (Get-Command node.exe).Source
+          ./build/vm-management/VmManagement.exe selftest
+          if ($LASTEXITCODE -ne 0) { throw 'Native security validation failed' }
+          ./scripts/Test-VmManagementIntegration.ps1 -Layout wrapper
+          npm.cmd test
+          if ($LASTEXITCODE -ne 0) { throw 'Full suite failed' }
+          ./scripts/Package-VmManagement.ps1 -Commit $env:RELEASE_COMMIT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vm-management-release-${{ inputs.commit }}
+          if-no-files-found: error
+          path: |
+            build/SmartHome-VmManagement-${{ inputs.commit }}.zip
+            build/SmartHome-VmManagement-${{ inputs.commit }}.zip.sha256
+            build/SmartHome-VmManagement-Setup-${{ inputs.commit }}.exe
+            build/SmartHome-VmManagement-Setup-${{ inputs.commit }}.exe.sha256
+  draft:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_COMMIT: ${{ inputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: vm-management-release-${{ inputs.commit }}
+          path: release-assets
+      - name: Create reviewable draft only
+        run: |
+          gh release create "vm-management-$RELEASE_COMMIT" release-assets/* --draft --target "$RELEASE_COMMIT" --title "Smart Home VM Management $RELEASE_COMMIT" --notes-file docs/VM_MANAGEMENT_RELEASE_NOTES.md

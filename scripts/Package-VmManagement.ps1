@@ -21,4 +21,15 @@ if(Test-Path -LiteralPath $zip){Remove-Item -LiteralPath $zip}
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($OutputDirectory,$zip)
 (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()|Set-Content -LiteralPath "$zip.sha256" -Encoding ASCII
+$setup=Join-Path (Split-Path $OutputDirectory -Parent) "SmartHome-VmManagement-Setup-$Commit.exe"
+$setupRelease=Join-Path (Split-Path $OutputDirectory -Parent) 'SetupRelease.cs'
+$archiveHash=(Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+[IO.File]::WriteAllText($setupRelease,('namespace SmartHomeSetup { public static class Release { public const string Commit="'+$Commit+'"; public const string ArchiveSha256="'+$archiveHash+'"; } }'),[Text.UTF8Encoding]::new($false))
+$csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$setupSource=Join-Path $source 'windows\VmManagement\Setup.cs'
+$setupManifest=Join-Path $source 'windows\VmManagement\Setup.manifest'
+& $csc /nologo /target:winexe /platform:x64 /optimize+ /warnaserror+ "/out:$setup" "/win32manifest:$setupManifest" "/resource:$zip,SmartHomePayload.zip" /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll $setupSource $setupRelease
+if($LASTEXITCODE -ne 0){throw 'Executable setup compilation failed'}
+(Get-FileHash -Algorithm SHA256 -LiteralPath $setup).Hash.ToLowerInvariant()|Set-Content -LiteralPath "$setup.sha256" -Encoding ASCII
 Write-Output $zip
+Write-Output $setup
