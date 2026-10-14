@@ -73,12 +73,12 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node}catch{$insecureRejected=$_.Exception.Message.StartsWith('Unprotected management input')}
  Assert $insecureRejected 'foreign runtime writers rejected before installation'
  $tunnelPidBefore=@(Get-Process tunnel-client)[0].Id
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node
+ try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node}catch{Write-Output ("Hardening failure location: "+$_.ScriptStackTrace);throw}
  Assert (@(Get-Process tunnel-client)[0].Id -eq $tunnelPidBefore) 'permission hardening does not restart service'
  Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'permission hardening preserves exact configuration bytes'
  Assert ((Get-Acl $sibling).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) -eq $siblingAclBefore) 'unrelated sibling permissions preserved'
  Assert (@(Get-ChildItem (Split-Path $package -Parent) -Filter 'runtime-acl-before-*.json').Count -eq 1) 'protected permission backup retained'
- & "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node
+ try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node}catch{Write-Output ("Hardening failure location: "+$_.ScriptStackTrace);throw}
  Assert (@(Get-Process tunnel-client)[0].Id -eq $tunnelPidBefore) 'permission hardening is idempotent and preserves process'
  $wrongConfigRejected=$false
  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node -TunnelConfigPath $decoy}catch{$wrongConfigRejected=$_.Exception.Message -eq 'Supplied configuration differs from active task'}

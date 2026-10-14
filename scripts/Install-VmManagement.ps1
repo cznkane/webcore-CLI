@@ -45,7 +45,7 @@ function Assert-ImmutableParents([string]$Path){
  $cursor=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
  $installerSid=([Security.Principal.NTAccount]::new('NT SERVICE','TrustedInstaller')).Translate([Security.Principal.SecurityIdentifier]).Value
  $trusted=@('S-1-5-18','S-1-5-32-544',$installerSid)
- $danger=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
+ $danger=([int][Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 268435456
  while($cursor){$acl=Get-Acl -LiteralPath $cursor;$owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;if($owner -notin $trusted){throw 'Untrusted ancestor ownership'}
   foreach($ace in $acl.Access){if(($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)-ne 0){continue};$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and ($ace.FileSystemRights -band $danger)-ne 0){throw 'Mutable ancestor permits protected-source replacement'}}
   $cursor=[IO.Path]::GetDirectoryName($cursor)
@@ -55,7 +55,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
  if(-not $RuntimeRoot.StartsWith('C:\SmartHome\',[StringComparison]::OrdinalIgnoreCase) -or -not $TunnelExecutable.StartsWith('C:\SmartHome\',[StringComparison]::OrdinalIgnoreCase)){throw 'Hardening scope requires existing C:\SmartHome runtime'}
  $trusted=@('S-1-5-18','S-1-5-32-544')
  $write=([int][Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 1073741824 -bor 268435456
- $danger=[Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership'
+ $danger=([int][Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 268435456
  $scope=@($RuntimeRoot)+@(Get-ChildItem -LiteralPath $RuntimeRoot -Recurse -Force | ForEach-Object FullName)+@($TunnelExecutable)
  $parents=@()
  foreach($leaf in @($RuntimeRoot,$TunnelExecutable)){
@@ -85,7 +85,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
   $raw=[Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorSddlForm($sections))
   $rewritten=[Security.AccessControl.RawAcl]::new($raw.DiscretionaryAcl.Revision,$raw.DiscretionaryAcl.Count*2)
   foreach($ace in $raw.DiscretionaryAcl){
-   $ace.AceFlags=$ace.AceFlags -band (-bnot [Security.AccessControl.AceFlags]::Inherited)
+   $ace.AceFlags=[Security.AccessControl.AceFlags]([int]$ace.AceFlags -band (255 -bxor [int][Security.AccessControl.AceFlags]::Inherited))
    $qualified=$ace -is [Security.AccessControl.QualifiedAce]
    $foreign=$qualified -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $ace.SecurityIdentifier.Value -notin $trusted
    if($target -and $foreign -and ($ace.AccessMask -band $write) -ne 0){
@@ -96,7 +96,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
     if(($ace.AceFlags -band $inheritMask) -ne 0){
      $bytes=New-Object byte[] $ace.BinaryLength;$ace.GetBinaryForm($bytes,0)
      $childAce=[Security.AccessControl.GenericAce]::CreateFromBinaryForm($bytes,0)
-     $childAce.AceFlags=$childAce.AceFlags -bor [Security.AccessControl.AceFlags]::InheritOnly
+     $childAce.AceFlags=[Security.AccessControl.AceFlags]([int]$childAce.AceFlags -bor [int][Security.AccessControl.AceFlags]::InheritOnly)
      $rewritten.InsertAce($rewritten.Count,$childAce)
     }
     $ace.AceFlags=[Security.AccessControl.AceFlags]::None
@@ -105,7 +105,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
    $rewritten.InsertAce($rewritten.Count,$ace)
   }
   $raw.DiscretionaryAcl=$rewritten
-  $raw.SetFlags($raw.ControlFlags -bor [Security.AccessControl.ControlFlags]::DiscretionaryAclProtected)
+  $raw.SetFlags([Security.AccessControl.ControlFlags]([int]$raw.ControlFlags -bor [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))
   $acl.SetSecurityDescriptorSddlForm($raw.GetSddlForm($sections),$sections)
   $plans+=@{Path=$path;Acl=$acl;Target=$target}
  }
