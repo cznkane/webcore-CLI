@@ -48,6 +48,16 @@ public static class Setup {
   foreach(var sid in new[]{"S-1-5-18","S-1-5-32-544"})acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
   Directory.SetAccessControl(path,acl);
  }
+ static void ProtectFile(string path) {
+  NoReparse(path);var acl=new FileSecurity();acl.SetAccessRuleProtection(true,false);acl.SetOwner(new SecurityIdentifier("S-1-5-32-544"));
+  foreach(var sid in new[]{"S-1-5-18","S-1-5-32-544"})acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,AccessControlType.Allow));
+  File.SetAccessControl(path,acl);
+ }
+ static void ProtectExtractedTree() {
+  ProtectDirectory(Payload);
+  foreach(var directory in Directory.GetDirectories(Payload,"*",SearchOption.AllDirectories)) { NoReparse(directory);ProtectDirectory(directory); }
+  foreach(var file in Directory.GetFiles(Payload,"*",SearchOption.AllDirectories))ProtectFile(file);
+ }
  public static bool SafeEntry(string name,int attributes) {
   if(String.IsNullOrEmpty(name)||name.StartsWith("/")||name.IndexOf('\\')>=0||name.IndexOf(':')>=0||((attributes>>16)&0xf000)==0xa000)return false;
   foreach(var segment in name.TrimEnd('/').Split('/')) {
@@ -90,13 +100,14 @@ public static class Setup {
   using(var input=Assembly.GetExecutingAssembly().GetManifestResourceStream("SmartHomePayload.zip")) {
    Require(input!=null,"Embedded package missing.");using(var output=new FileStream(archive,FileMode.CreateNew,FileAccess.Write,FileShare.None))input.CopyTo(output);
   }
+  ProtectFile(archive);
   Require(Hash(archive)==Release.ArchiveSha256,"Embedded archive checksum mismatch.");
   using(var zip=ZipFile.OpenRead(archive)) {
    long total=0;Require(zip.Entries.Count>0&&zip.Entries.Count<=4096,"Archive entry limit.");
    var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
    foreach(var entry in zip.Entries) {total+=entry.Length;Require(SafeEntry(entry.FullName,entry.ExternalAttributes)&&seen.Add(entry.FullName.TrimEnd('/'))&&total<=64L*1024*1024,"Unsafe embedded archive.");}
   }
-  ZipFile.ExtractToDirectory(archive,Payload);VerifyPayload(archive);
+  ZipFile.ExtractToDirectory(archive,Payload);ProtectExtractedTree();VerifyPayload(archive);
  }
  static string RunInstaller(string mode) {
   Extract();var shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),@"System32\WindowsPowerShell\v1.0\powershell.exe");
