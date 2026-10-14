@@ -63,6 +63,10 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $sibling=Join-Path $fixture 'unrelated';New-Item -ItemType Directory -Path $sibling|Out-Null
  $parentAcl=Get-Acl $fixture;$parentAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new('S-1-5-11'),'Modify','ContainerInherit,ObjectInherit','None','Allow'));Set-Acl $fixture $parentAcl
  $siblingAclBefore=(Get-Acl $sibling).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access)
+ # Never translate ACL identities to names: retired local accounts can remain on runtime/parents.
+ $orphanSid=[Security.Principal.SecurityIdentifier]::new('S-1-5-21-2147483001-2147483002-2147483003-1999')
+ $parentAcl=Get-Acl $fixture;$parentAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($orphanSid,'ReadAndExecute','None','None','Allow'));Set-Acl $fixture $parentAcl
+ $runtimeAcl=Get-Acl $payload;$runtimeAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($orphanSid,'Modify','None','None','Allow'));Set-Acl $payload $runtimeAcl
 
  $parserErrors=$null;$tokens=$null
  [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Install-VmManagement.ps1'),[ref]$tokens,[ref]$parserErrors)|Out-Null
@@ -75,6 +79,8 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $tunnelPidBefore=@(Get-Process tunnel-client)[0].Id
  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node}catch{Write-Output ("Hardening failure location: "+$_.ScriptStackTrace);throw}
  Assert (@(Get-Process tunnel-client)[0].Id -eq $tunnelPidBefore) 'permission hardening does not restart service'
+ $orphanRules=@((Get-Acl $payload).GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])|Where-Object {$_.IdentityReference.Value -eq $orphanSid.Value})
+ Assert ($orphanRules.Count -eq 1 -and ($orphanRules[0].FileSystemRights -band [Security.AccessControl.FileSystemRights]::Write) -eq 0) 'unresolved identity writer restricted by numeric SID'
  Assert ((Get-Acl (Join-Path $payload 'system-owned-canary.txt')).GetOwner([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-18') 'permission hardening preserves SYSTEM file ownership'
  Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'permission hardening preserves exact configuration bytes'
  Assert ((Get-Acl $sibling).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) -eq $siblingAclBefore) 'unrelated sibling permissions preserved'
