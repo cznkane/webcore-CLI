@@ -72,6 +72,24 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Install-VmManagement.ps1'),[ref]$tokens,[ref]$parserErrors)|Out-Null
  Assert ($parserErrors.Count-eq 0) 'PowerShell installer syntax'
  & "$PSScriptRoot\Package-VmManagement.ps1" -Commit ('a'*40)
+ $setup=Join-Path $source ('build\SmartHome-VmManagement-Setup-'+('a'*40)+'.exe')
+ $setupStage='C:\ProgramData\SmartHome\VmManagementInstall-'+('a'*40)
+ if(Test-Path $setupStage){throw 'Unexpected existing executable setup fixture'}
+ $setupStdout=Join-Path $env:RUNNER_TEMP 'vm-setup-stdout.txt'
+ $setupStderr=Join-Path $env:RUNNER_TEMP 'vm-setup-stderr.txt'
+ $setupProcess=Start-Process -FilePath $setup -ArgumentList 'verify-package' -Wait -PassThru -RedirectStandardOutput $setupStdout -RedirectStandardError $setupStderr
+ if($setupProcess.ExitCode -ne 0){
+  Get-Content -LiteralPath $setupStdout,$setupStderr -ErrorAction SilentlyContinue|Write-Output
+ }
+ Assert ($setupProcess.ExitCode -eq 0) 'native EXE verifies and extracts embedded pinned package'
+ $setupProcess=Start-Process -FilePath $setup -ArgumentList 'verify-package' -Wait -PassThru
+ Assert ($setupProcess.ExitCode -eq 0) 'native EXE package staging is idempotent'
+ $setupProcess=Start-Process -FilePath $setup -ArgumentList 'install --command whoami' -Wait -PassThru
+ Assert ($setupProcess.ExitCode -ne 0) 'native EXE rejects caller-selected installation commands'
+ [IO.File]::AppendAllText((Join-Path $setupStage 'payload\package.json'),' ')
+ $setupProcess=Start-Process -FilePath $setup -ArgumentList 'verify-package' -Wait -PassThru
+ Assert ($setupProcess.ExitCode -ne 0) 'native EXE refuses changed protected staged bytes'
+ Remove-Item -LiteralPath $setupStage -Recurse -Force
  Copy-Item -LiteralPath (Join-Path $source 'build\package') -Destination $package -Recurse
  $insecureRejected=$false
  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node}catch{$insecureRejected=$_.Exception.Message.StartsWith('Unprotected management input')}
@@ -100,6 +118,10 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  }
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Preflight -PackageRoot $package -NodePath $node
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node
+ $approvalPath=Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'Smart Home VM Approval.lnk'
+ $approvalLink=(New-Object -ComObject WScript.Shell).CreateShortcut($approvalPath)
+ Assert ($approvalLink.TargetPath -eq "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe") 'approval shortcut elevates a public Windows host'
+ Assert (($approvalLink.Arguments -eq ('-NoProfile -Command "& '''+(Join-Path $root 'bin\VmManagement.exe')+''' operator"')) -and (([BitConverter]::ToUInt32([IO.File]::ReadAllBytes($approvalPath),20) -band 0x2000) -ne 0)) 'approval shortcut has fixed operator scope and elevation flag'
  Start-Sleep -Seconds 3
  & "$PSScriptRoot\Install-VmManagement.ps1" -Mode Install -PackageRoot $package -NodePath $node
  Assert ((Get-ScheduledTask -TaskName 'SmartHome-WebCoRE-MCP').State-eq 'Running') 'installation preserves existing runtime'

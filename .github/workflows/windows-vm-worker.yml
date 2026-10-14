@@ -56,4 +56,6 @@ jobs:
           path: |
             build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}.zip
             build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha || github.sha }}.zip.sha256
+            build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha || github.sha }}.exe
+            build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha || github.sha }}.exe.sha256
           if-no-files-found: error

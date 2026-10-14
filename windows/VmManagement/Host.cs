@@ -259,15 +259,35 @@ public static class Host {
    Guard.Require(count<=1,"duplicate_tunnel");if((running&&count==1)||(!running&&count==0)) return;Thread.Sleep(1000);
   }throw new InvalidOperationException("tunnel_state_timeout");
  }
+ public static string ApprovalDetails(Dictionary<string,object> item) {
+  var text=new System.Text.StringBuilder();
+  foreach(var key in new[]{"operation","status","requestId","commit","sha256","expectedCurrentSha256","expiresAt"})text.AppendLine(key+": "+Guard.Text(item,key));
+  object result;if(item.TryGetValue("result",out result))text.AppendLine("result: "+Guard.Json.Serialize(result));return text.ToString();
+ }
+ sealed class ApprovalItem {
+  readonly string raw;
+  public ApprovalItem(object record) {raw=Guard.Json.Serialize(record);}
+  public Dictionary<string,object> Record {get{return Guard.Parse(raw);}}
+  public override string ToString() {var item=Record;return Guard.Text(item,"operation")+" | "+Guard.Text(item,"status")+" | "+Guard.Text(item,"requestId");}
+ }
  static void Operator() {
   Guard.Require(WindowsIdentity.GetCurrent().User.Value==c.OperatorSid&&new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator),"operator_identity");
-  Application.EnableVisualStyles();var form=new Form{Text="Smart Home — independent VM approval",Width=1000,Height=650};var list=new ListBox{Dock=DockStyle.Fill,Font=new System.Drawing.Font("Consolas",10)};var buttons=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=50};
-  var bootstrap=new Button{Text="Queue initial deployment",Width=180};var refresh=new Button{Text="Refresh",Width=100};var approve=new Button{Text="Approve once",Width=140};var deny=new Button{Text="Deny",Width=100};buttons.Controls.AddRange(new Control[]{refresh,approve,deny,bootstrap});form.Controls.Add(list);form.Controls.Add(buttons);
-  EventHandler reload=(sender,e)=>{try {var response=Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="list" });list.Items.Clear();object records;if(response.TryGetValue("requests",out records)) foreach(var record in (object[])records) list.Items.Add(Guard.Json.Serialize(record));}catch {MessageBox.Show("Broker unavailable. Approvals were not issued.");}};
+  Application.EnableVisualStyles();var form=new Form{Text="Smart Home — independent VM approval",Width=1100,Height=750};
+  var split=new SplitContainer{Dock=DockStyle.Fill,Orientation=Orientation.Horizontal,Height=600,SplitterDistance=250};
+  var list=new ListBox{Dock=DockStyle.Fill,Font=new System.Drawing.Font("Consolas",10),HorizontalScrollbar=true};
+  var details=new TextBox{Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,WordWrap=true,ScrollBars=ScrollBars.Vertical,Font=new System.Drawing.Font("Consolas",10)};
+  split.Panel1.Controls.Add(list);split.Panel2.Controls.Add(details);var buttons=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=50};
+  var bootstrap=new Button{Text="Queue initial deployment",Width=180};var refresh=new Button{Text="Refresh",Width=100};var approve=new Button{Text="Approve once",Width=140};var deny=new Button{Text="Deny",Width=100};buttons.Controls.AddRange(new Control[]{refresh,approve,deny,bootstrap});form.Controls.Add(split);form.Controls.Add(buttons);
+  list.SelectedIndexChanged+=(sender,e)=>{var selected=list.SelectedItem as ApprovalItem;details.Text=selected==null?"Select a request to inspect its complete scope and outcome.":ApprovalDetails(selected.Record);};
+  EventHandler reload=(sender,e)=>{try {
+   var selected=list.SelectedItem as ApprovalItem;var selectedId=selected==null?null:Guard.Text(selected.Record,"requestId");
+   var response=Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="list" });list.Items.Clear();object records;
+   if(response.TryGetValue("requests",out records))foreach(var record in (object[])records){var item=new ApprovalItem(record);list.Items.Add(item);if(Guard.Text(item.Record,"requestId")==selectedId)list.SelectedItem=item;}
+  }catch {MessageBox.Show("Broker unavailable. Approvals were not issued.");}};
   bootstrap.Click+=(sender,e)=>{try{Pipe.Call(OperatorPipe,exe,c.ExeSha256,new{action="bootstrap"});reload(sender,e);}catch{MessageBox.Show("Initial request failed closed.");}};
-  refresh.Click+=reload;approve.Click+=(sender,e)=>{if(list.SelectedItem==null)return;var item=Guard.Parse((string)list.SelectedItem);var prompt="Approve ONE execution on TERMINAL?\n\n"+Guard.Json.Serialize(item)+"\n\nThis may stop the MCP tunnel briefly. Verify operation, commit and SHA-256 against the reviewed change.";
+  refresh.Click+=reload;approve.Click+=(sender,e)=>{var selected=list.SelectedItem as ApprovalItem;if(selected==null)return;var item=selected.Record;var prompt="Approve ONE execution on TERMINAL?\n\n"+ApprovalDetails(item)+"\nThis may stop the MCP tunnel briefly. Verify operation, commit and SHA-256 against the reviewed change.";
    if(MessageBox.Show(prompt,"Scoped approval",MessageBoxButtons.YesNo,MessageBoxIcon.Warning)!=DialogResult.Yes)return;try {Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="approve",requestId=Guard.Text(item,"requestId") });reload(sender,e);}catch {MessageBox.Show("Approval failed closed.");}};
-  deny.Click+=(sender,e)=>{if(list.SelectedItem==null)return;var item=Guard.Parse((string)list.SelectedItem);try {Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="deny",requestId=Guard.Text(item,"requestId") });reload(sender,e);}catch {MessageBox.Show("Denial failed.");}};
+  deny.Click+=(sender,e)=>{var selected=list.SelectedItem as ApprovalItem;if(selected==null)return;var item=selected.Record;try {Pipe.Call(OperatorPipe,exe,c.ExeSha256,new { action="deny",requestId=Guard.Text(item,"requestId") });reload(sender,e);}catch {MessageBox.Show("Denial failed.");}};
   form.Load+=reload;Application.Run(form);
  }
 }

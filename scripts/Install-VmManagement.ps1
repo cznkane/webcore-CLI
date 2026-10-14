@@ -372,7 +372,17 @@ try{
  for($attempt=0;$attempt -lt 15;$attempt++){if((Get-ScheduledTask -TaskName $WorkerTask).State -eq 'Running' -and (Get-ScheduledTask -TaskName $BrokerTask).State -eq 'Running'){break};Start-Sleep -Seconds 1}
  if((Get-ScheduledTask -TaskName $WorkerTask).State -ne 'Running' -or (Get-ScheduledTask -TaskName $BrokerTask).State -ne 'Running'){throw 'New management tasks failed to start; no production cutover occurred'}
  if((Hash $TunnelConfigPath)-ne $cfg.InitialConfigSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-MCP'))-ne $cfg.McpTaskXmlSha256 -or (Text-Hash (Export-Task 'SmartHome-WebCoRE-Watchdog'))-ne $cfg.WatchdogTaskXmlSha256){throw 'Existing runtime preservation check failed'}
- $shell=New-Object -ComObject WScript.Shell;$shortcut=$shell.CreateShortcut($ApprovalShortcut);$shortcut.TargetPath=Join-Path $Root 'bin\VmManagementApprove.exe';$shortcut.WorkingDirectory=Join-Path $Root 'bin';$shortcut.Description='Independent scoped approvals for Smart Home VM management';$shortcut.Save()
+ # Explorer's filtered token cannot read the protected native host. Elevate a public Windows
+ # executable first; never add ordinary-user readers to the management input boundary.
+ $shell=New-Object -ComObject WScript.Shell;$shortcut=$shell.CreateShortcut($ApprovalShortcut)
+ $shortcut.TargetPath="$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+ $shortcut.Arguments='-NoProfile -Command "& '''+(Join-Path $Root 'bin\VmManagement.exe')+''' operator"'
+ $shortcut.WorkingDirectory=$env:WINDIR;$shortcut.Description='Independent scoped approvals for Smart Home VM management';$shortcut.Save()
+ $shortcutBytes=[IO.File]::ReadAllBytes($ApprovalShortcut)
+ if($shortcutBytes.Length -lt 76 -or [BitConverter]::ToUInt32($shortcutBytes,0) -ne 76){throw 'Unexpected approval shortcut format'}
+ $shortcutFlags=[BitConverter]::ToUInt32($shortcutBytes,20)
+ [BitConverter]::GetBytes([uint32]($shortcutFlags -bor 0x2000)).CopyTo($shortcutBytes,20)
+ [IO.File]::WriteAllBytes($ApprovalShortcut,$shortcutBytes)
  Existing-Verify
  Write-Json (Join-Path $Root 'installed.json') @{enabled=$true;version=1}
  Write-Output "INSTALL PASS: boundary provisioned; production not cut over. Candidate commit: $($candidate.Commit); manifest SHA-256: $($candidate.Sha256). Use independent operator approval for activation."
