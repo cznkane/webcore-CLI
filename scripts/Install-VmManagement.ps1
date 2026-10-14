@@ -39,15 +39,15 @@ function Assert-Protected([string]$Path,[string]$ReaderSid){
  $owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
  if($owner -notin @('S-1-5-18','S-1-5-32-544')){throw 'Untrusted file owner'}
  $write=([int][Security.AccessControl.FileSystemRights]'Write,Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 1073741824 -bor 268435456
- foreach($ace in $acl.Access){$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw ('Unprotected management input: '+$Path)}}}
+ foreach($ace in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){$sid=$ace.IdentityReference.Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18','S-1-5-32-544')){if(($ace.FileSystemRights -band $write)-ne 0 -or ($ReaderSid -and $sid -ne $ReaderSid)){throw ('Unprotected management input: '+$Path)}}}
 }
 function Assert-ImmutableParents([string]$Path){
  $cursor=[IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Path))
- $installerSid=([Security.Principal.NTAccount]::new('NT SERVICE','TrustedInstaller')).Translate([Security.Principal.SecurityIdentifier]).Value
+ $installerSid='S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464'
  $trusted=@('S-1-5-18','S-1-5-32-544',$installerSid)
  $danger=([int][Security.AccessControl.FileSystemRights]'Delete,DeleteSubdirectoriesAndFiles,ChangePermissions,TakeOwnership') -bor 268435456
  while($cursor){$acl=Get-Acl -LiteralPath $cursor;$owner=$acl.GetOwner([Security.Principal.SecurityIdentifier]).Value;if($owner -notin $trusted){throw 'Untrusted ancestor ownership'}
-  foreach($ace in $acl.Access){if(($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)-ne 0){continue};$sid=$ace.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and ($ace.FileSystemRights -band $danger)-ne 0){throw 'Mutable ancestor permits protected-source replacement'}}
+  foreach($ace in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){if(($ace.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)-ne 0){continue};$sid=$ace.IdentityReference.Value;if($ace.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and ($ace.FileSystemRights -band $danger)-ne 0){throw 'Mutable ancestor permits protected-source replacement'}}
   $cursor=[IO.Path]::GetDirectoryName($cursor)
  }
 }
@@ -72,14 +72,14 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
   $backup+=@{Path=$path;Sddl=$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner,Group,Access')}
   $target=$path -in $scope
   if(Test-Path -LiteralPath $path -PathType Leaf){$hashes[$path]=Hash $path}
-  $needsChange=@($acl.Access | Where-Object {
-   $sid=$_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+  $needsChange=@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object {
+   $sid=$_.IdentityReference.Value
    $_.AccessControlType -eq 'Allow' -and $sid -notin $trusted -and
    (($target -and ($_.FileSystemRights -band $write) -ne 0) -or
     (-not $target -and ($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and ($_.FileSystemRights -band $danger) -ne 0))
   }).Count -gt 0
   if(-not $needsChange){continue}
-  if(@($acl.Access | Where-Object AccessControlType -eq 'Deny').Count){throw 'Existing deny permissions require a reviewed hardening plan'}
+  if(@($acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]) | Where-Object AccessControlType -eq 'Deny').Count){throw 'Existing deny permissions require a reviewed hardening plan'}
   # Rewrite a complete DACL: inherited ACEs cannot be reliably removed in memory before persistence.
   $sections=[Security.AccessControl.AccessControlSections]'Owner,Group,Access'
   $raw=[Security.AccessControl.RawSecurityDescriptor]::new($acl.GetSecurityDescriptorSddlForm($sections))
@@ -118,6 +118,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
   # Seal deepest targets first; parent inheritance cannot reintroduce writable ACEs.
   foreach($plan in @($plans | Sort-Object @{Expression={$_.Path.Length};Descending=$true})){Set-Acl -LiteralPath $plan.Path -AclObject $plan.Acl}
   foreach($path in $scope){Assert-Protected $path}
+  Assert-ImmutableParents $RuntimeRoot;Assert-ImmutableParents $TunnelExecutable;Assert-ImmutableParents $NodePath
   foreach($path in $hashes.Keys){if((Hash $path) -ne $hashes[$path]){throw 'Runtime content changed during permission hardening'}}
  }catch{
   $failure=$_
