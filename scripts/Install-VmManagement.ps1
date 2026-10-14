@@ -100,7 +100,9 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
      $rewritten.InsertAce($rewritten.Count,$childAce)
     }
     $ace.AceFlags=[Security.AccessControl.AceFlags]::None
-    $ace.AccessMask=[int][Security.AccessControl.FileSystemRights]'ReadAndExecute,Synchronize'
+    $parentMask=[int]$ace.AccessMask
+    if(($parentMask -band 268435456) -ne 0){$parentMask=($parentMask -band (-bnot 268435456)) -bor [int][Security.AccessControl.FileSystemRights]::FullControl}
+    $ace.AccessMask=$parentMask -band (-bnot $danger)
    }
    $rewritten.InsertAce($rewritten.Count,$ace)
   }
