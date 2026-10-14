@@ -90,10 +90,10 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
    $foreign=$qualified -and $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed -and $ace.SecurityIdentifier.Value -notin $trusted
    if($target -and $foreign -and ($ace.AccessMask -band $write) -ne 0){
     $ace.AccessMask=[int][Security.AccessControl.FileSystemRights]'ReadAndExecute,Synchronize'
-   }elseif(-not $target -and $foreign -and ($ace.AceFlags -band [Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and ($ace.AccessMask -band $danger) -ne 0){
+   }elseif(-not $target -and $foreign -and ([int]$ace.AceFlags -band [int][Security.AccessControl.AceFlags]::InheritOnly) -eq 0 -and ($ace.AccessMask -band $danger) -ne 0){
     # Keep the original writer mask for unrelated descendants, but remove replacement rights on this parent.
     $inheritMask=[Security.AccessControl.AceFlags]'ContainerInherit,ObjectInherit'
-    if(($ace.AceFlags -band $inheritMask) -ne 0){
+    if(([int]$ace.AceFlags -band [int]$inheritMask) -ne 0){
      $bytes=New-Object byte[] $ace.BinaryLength;$ace.GetBinaryForm($bytes,0)
      $childAce=[Security.AccessControl.GenericAce]::CreateFromBinaryForm($bytes,0)
      $childAce.AceFlags=[Security.AccessControl.AceFlags]([int]$childAce.AceFlags -bor [int][Security.AccessControl.AceFlags]::InheritOnly)
