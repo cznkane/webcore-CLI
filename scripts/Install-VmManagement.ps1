@@ -106,7 +106,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
   }
   $raw.DiscretionaryAcl=$rewritten
   $raw.SetFlags([Security.AccessControl.ControlFlags]([int]$raw.ControlFlags -bor [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected))
-  $acl.SetSecurityDescriptorSddlForm($raw.GetSddlForm($sections),$sections)
+  $acl.SetSecurityDescriptorSddlForm($raw.GetSddlForm([Security.AccessControl.AccessControlSections]::Access),[Security.AccessControl.AccessControlSections]::Access)
   $plans+=@{Path=$path;Acl=$acl;Target=$target}
  }
  $backupPath=Join-Path (Split-Path $PackageRoot -Parent) ('runtime-acl-before-'+[Guid]::NewGuid().ToString('N')+'.json')
@@ -122,7 +122,7 @@ function Harden-Runtime([string]$RuntimeRoot,[string]$TunnelExecutable){
   # Restore known pre-change ACLs on failure. Never silently leave a partial hardening operation.
   $restoreFailed=$false
   foreach($entry in @($backup | Sort-Object @{Expression={$_.Path.Length}})){
-   try{$restore=Get-Acl -LiteralPath $entry.Path;$restore.SetSecurityDescriptorSddlForm($entry.Sddl,[Security.AccessControl.AccessControlSections]'Owner,Group,Access');Set-Acl -LiteralPath $entry.Path -AclObject $restore}catch{$restoreFailed=$true}
+   try{$restore=Get-Acl -LiteralPath $entry.Path;$restore.SetSecurityDescriptorSddlForm($entry.Sddl,[Security.AccessControl.AccessControlSections]::Access);Set-Acl -LiteralPath $entry.Path -AclObject $restore}catch{$restoreFailed=$true}
   }
   if($restoreFailed){throw "Permission restoration incomplete; preserve protected backup: $backupPath"}
   throw $failure

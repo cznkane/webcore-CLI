@@ -35,7 +35,7 @@ try{
  $node=Join-Path $fixture 'node.exe';Copy-Item -LiteralPath (Get-Command node.exe).Source -Destination $node
  $fixtureSource=@'
 using System;using System.Threading;using System.IO;using System.Diagnostics;using System.Text.RegularExpressions;
-public class FixtureTunnel{public static void Main(string[] args){var text=File.ReadAllText(args[1]).Replace("\\\\","\\");var match=Regex.Match(text,@"[A-Za-z]:[\\/][^'\r\n]*?(?:[\\/]server[\\/]index\.js|[\\/]windows-readonly-launcher\.cjs)");var psi=new ProcessStartInfo{FileName=@"C:\SmartHome\VmManagementFixture\node.exe",Arguments="\""+match.Value+"\"",UseShellExecute=false,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};var child=Process.Start(psi);child.OutputDataReceived+=(s,e)=>{};child.ErrorDataReceived+=(s,e)=>{};child.BeginOutputReadLine();child.BeginErrorReadLine();while(true)Thread.Sleep(1000);}}
+public class FixtureTunnel{public static void Main(string[] args){var text=File.ReadAllText(args[1]).Replace("\\\\","\\");var match=Regex.Match(text,@"[A-Za-z]:[\\/][^'\r\n]*?(?:[\\/]server[\\/]index\.js|[\\/]windows-readonly-launcher\.cjs)");var psi=new ProcessStartInfo{FileName=@"C:\SmartHome\VmManagementFixture\node.exe",Arguments="\""+match.Value+"\"",UseShellExecute=false,RedirectStandardInput=true,RedirectStandardOutput=true,RedirectStandardError=true};var script=Path.GetFullPath(match.Value);var sourceRoot=script.EndsWith("index.js")?Path.GetDirectoryName(Path.GetDirectoryName(script)):Path.GetDirectoryName(script);if(sourceRoot.EndsWith("\\payload",StringComparison.OrdinalIgnoreCase))File.WriteAllText(Path.Combine(sourceRoot,"system-owned-canary.txt"),"not-secret");var child=Process.Start(psi);child.OutputDataReceived+=(s,e)=>{};child.ErrorDataReceived+=(s,e)=>{};child.BeginOutputReadLine();child.BeginErrorReadLine();while(true)Thread.Sleep(1000);}}
 '@
  Add-Type -TypeDefinition $fixtureSource -OutputAssembly (Join-Path $fixture 'tunnel-client.exe') -OutputType ConsoleApplication
  $yaml=Join-Path $webcore 'fixture.yaml'
@@ -75,6 +75,7 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $tunnelPidBefore=@(Get-Process tunnel-client)[0].Id
  try{& "$PSScriptRoot\Install-VmManagement.ps1" -Mode HardenRuntime -PackageRoot $package -NodePath $node}catch{Write-Output ("Hardening failure location: "+$_.ScriptStackTrace);throw}
  Assert (@(Get-Process tunnel-client)[0].Id -eq $tunnelPidBefore) 'permission hardening does not restart service'
+ Assert ((Get-Acl (Join-Path $payload 'system-owned-canary.txt')).GetOwner([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-18') 'permission hardening preserves SYSTEM file ownership'
  Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'permission hardening preserves exact configuration bytes'
  Assert ((Get-Acl $sibling).GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access) -eq $siblingAclBefore) 'unrelated sibling permissions preserved'
  Assert (@(Get-ChildItem (Split-Path $package -Parent) -Filter 'runtime-acl-before-*.json').Count -eq 1) 'protected permission backup retained'
