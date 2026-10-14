@@ -105,7 +105,12 @@ public static class Setup {
   using(var zip=ZipFile.OpenRead(archive)) {
    long total=0;Require(zip.Entries.Count>0&&zip.Entries.Count<=4096,"Archive entry limit.");
    var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-   foreach(var entry in zip.Entries) {total+=entry.Length;Require(SafeEntry(entry.FullName,entry.ExternalAttributes)&&seen.Add(entry.FullName.TrimEnd('/'))&&total<=64L*1024*1024,"Unsafe embedded archive.");}
+   foreach(var entry in zip.Entries) {
+    total+=entry.Length;
+    Require(SafeEntry(entry.FullName,entry.ExternalAttributes),"Unsafe embedded archive entry: "+entry.FullName);
+    Require(seen.Add(entry.FullName.TrimEnd('/')),"Duplicate embedded archive entry.");
+    Require(total<=64L*1024*1024,"Embedded archive size limit.");
+   }
   }
   ZipFile.ExtractToDirectory(archive,Payload);ProtectExtractedTree();VerifyPayload(archive);
  }
