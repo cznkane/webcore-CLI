@@ -75,7 +75,12 @@ public class FixtureTunnel{public static void Main(string[] args){var text=File.
  $setup=Join-Path $source ('build\SmartHome-VmManagement-Setup-'+('a'*40)+'.exe')
  $setupStage='C:\ProgramData\SmartHome\VmManagementInstall-'+('a'*40)
  if(Test-Path $setupStage){throw 'Unexpected existing executable setup fixture'}
- $setupProcess=Start-Process -FilePath $setup -ArgumentList 'verify-package' -Wait -PassThru
+ $setupStdout=Join-Path $env:RUNNER_TEMP 'vm-setup-stdout.txt'
+ $setupStderr=Join-Path $env:RUNNER_TEMP 'vm-setup-stderr.txt'
+ $setupProcess=Start-Process -FilePath $setup -ArgumentList 'verify-package' -Wait -PassThru -RedirectStandardOutput $setupStdout -RedirectStandardError $setupStderr
+ if($setupProcess.ExitCode -ne 0){
+  Get-Content -LiteralPath $setupStdout,$setupStderr -ErrorAction SilentlyContinue|Write-Output
+ }
  Assert ($setupProcess.ExitCode -eq 0) 'native EXE verifies and extracts embedded pinned package'
  $setupProcess=Start-Process -FilePath $setup -ArgumentList 'verify-package' -Wait -PassThru
  Assert ($setupProcess.ExitCode -eq 0) 'native EXE package staging is idempotent'
