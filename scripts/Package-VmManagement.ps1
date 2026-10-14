@@ -20,6 +20,7 @@ if(Test-Path -LiteralPath $zip){Remove-Item -LiteralPath $zip}
 # Build the archive explicitly so every entry uses canonical ZIP forward slashes.
 # Compress-Archive omits hidden compatibility manifests and .NET Framework's
 # CreateFromDirectory emits Windows backslashes.
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $zipStream=[IO.File]::Open($zip,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
 try{
