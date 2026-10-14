@@ -17,9 +17,20 @@ Get-ChildItem -LiteralPath $OutputDirectory -Recurse -Force -File|Sort-Object Fu
 [IO.File]::WriteAllText((Join-Path $OutputDirectory 'vm-package-manifest.json'),(@{Commit=$Commit;Files=$files}|ConvertTo-Json -Depth 8),[Text.UTF8Encoding]::new($false))
 $zip=Join-Path (Split-Path $OutputDirectory -Parent) "SmartHome-VmManagement-$Commit.zip"
 if(Test-Path -LiteralPath $zip){Remove-Item -LiteralPath $zip}
-# .NET ZipFile includes hidden compatibility manifests; Compress-Archive omits them.
+# Build the archive explicitly so every entry uses canonical ZIP forward slashes.
+# Compress-Archive omits hidden compatibility manifests and .NET Framework's
+# CreateFromDirectory emits Windows backslashes.
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-[IO.Compression.ZipFile]::CreateFromDirectory($OutputDirectory,$zip)
+$zipStream=[IO.File]::Open($zip,[IO.FileMode]::CreateNew,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)
+try{
+ $zipArchive=[IO.Compression.ZipArchive]::new($zipStream,[IO.Compression.ZipArchiveMode]::Create,$false)
+ try{
+  Get-ChildItem -LiteralPath $OutputDirectory -Recurse -Force -File|Sort-Object FullName|ForEach-Object{
+   $entryName=$_.FullName.Substring($OutputDirectory.Length+1).Replace('\','/')
+   [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zipArchive,$_.FullName,$entryName,[IO.Compression.CompressionLevel]::Optimal)|Out-Null
+  }
+ }finally{$zipArchive.Dispose()}
+}finally{$zipStream.Dispose()}
 (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()|Set-Content -LiteralPath "$zip.sha256" -Encoding ASCII
 $setup=Join-Path (Split-Path $OutputDirectory -Parent) "SmartHome-VmManagement-Setup-$Commit.exe"
 $setupRelease=Join-Path (Split-Path $OutputDirectory -Parent) 'SetupRelease.cs'
