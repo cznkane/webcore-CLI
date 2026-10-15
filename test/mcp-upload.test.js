@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -79,7 +80,11 @@ test('CLI and MCP prepare nested drafts and apply through bounded chunk URLs usi
   await writeFile(file, JSON.stringify(draft));
   const env = { ...process.env, XDG_CONFIG_HOME: temp };
   const cli = fileURLToPath(new URL('../server/cli.js', import.meta.url));
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../server/index.js', import.meta.url))], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const sourceText = JSON.stringify(draft);
+  const source = { commit: 'a'.repeat(40), path: 'school_calendar/cutover/2026-10-14/resized_test_candidates/TEST_1_01.json', sha256: createHash('sha256').update(sourceText).digest('hex') };
+  const preload = join(temp, 'source-fixture.mjs');
+  await writeFile(preload, `const original = globalThis.fetch; globalThis.fetch = (url, options) => String(url).startsWith('https://raw.githubusercontent.com/cznkane/smart-home-hubitat/') ? Promise.resolve(new Response(${JSON.stringify(sourceText)})) : original(url, options);`);
+  const child = spawn(process.execPath, ['--import', preload, fileURLToPath(new URL('../server/index.js', import.meta.url))], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
   let requestId = 0;
   const lines = createInterface({ input: child.stdout });
@@ -175,7 +180,26 @@ test('CLI and MCP prepare nested drafts and apply through bounded chunk URLs usi
   const lookupMcp = (await call('webcore_lookup_language', {})).structuredContent;
   assert.equal(lookupMcp.condition_reference.reference_status, 'unverified');
   assert.equal(lookupMcp.language_compatibility.live.language_hash, preparedMcp.language_compatibility.live.language_hash);
-  const savedMcp = await call('webcore_apply_piston_update', { id: 'pid', proposed: draft, expected_remote_hash: preparedMcp.expected_remote_hash, expected_body_hash: preparedMcp.proposed_body_hash, expected_proposed_hash: preparedMcp.proposed_hash });
+  const preparedSource = (await call('webcore_prepare_piston_update', { id: 'pid', source })).structuredContent;
+  assert.equal(preparedSource.ok, true);
+  assert.equal(preparedSource.proposed_body_hash, preparedMcp.proposed_body_hash);
+  assert.equal(preparedSource.proposed_hash, preparedMcp.proposed_hash);
+  assert.deepEqual(preparedSource.transport_preflight, preparedMcp.transport_preflight);
+  assert.equal(preparedSource.source_provenance.sha256, source.sha256);
+  const beforeSourceGuards = stagingRequests;
+  for (const extra of [
+    {},
+    { expected_body_hash: preparedSource.proposed_body_hash },
+    { expected_body_hash: '0'.repeat(64), expected_proposed_hash: preparedSource.proposed_hash },
+    { expected_body_hash: preparedSource.proposed_body_hash, expected_proposed_hash: '0'.repeat(64) },
+    { expected_body_hash: preparedSource.proposed_body_hash, expected_proposed_hash: preparedSource.proposed_hash, expected_remote_hash: '0'.repeat(64) }
+  ]) {
+    const rejected = await call('webcore_apply_piston_update', { id: 'pid', source, expected_remote_hash: preparedSource.expected_remote_hash, ...extra });
+    assert.equal(rejected.isError, true);
+    assert.equal(stagingRequests, beforeSourceGuards);
+  }
+  assert.equal(commits, 1, 'source preparation and rejected applies cannot upload');
+  const savedMcp = await call('webcore_apply_piston_update', { id: 'pid', source, expected_remote_hash: preparedMcp.expected_remote_hash, expected_body_hash: preparedMcp.proposed_body_hash, expected_proposed_hash: preparedMcp.proposed_hash });
   assert.equal(savedMcp.isError, false);
   assert.equal(savedMcp.structuredContent.result.status, 'ST_SUCCESS');
   assert.equal(savedMcp.structuredContent.result.upload.mode, 'chunked');
@@ -229,3 +253,4 @@ test('CLI and MCP prepare nested drafts and apply through bounded chunk URLs usi
   assert.equal(commits, 4);
   assert.equal(oversized, 0);
 });
+
