@@ -1,0 +1,53 @@
+name: Preflight release candidate validation
+on:
+  pull_request:
+    paths:
+      - 'server/client.js'
+      - 'server/index.js'
+      - 'server/update.js'
+      - 'test/upload.test.js'
+      - 'test/mcp-upload.test.js'
+      - 'package.json'
+      - 'plugin.json'
+      - '.codex-plugin/plugin.json'
+      - '.github/workflows/preflight-release-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify manifest agreement
+        run: node -e "const fs=require('fs');const v=require('./package.json').version;for(const p of ['plugin.json','.codex-plugin/plugin.json'])if(JSON.parse(fs.readFileSync(p)).version!==v)process.exit(1)"
+      - name: Syntax and full suite
+        run: |
+          npm run check
+          npm test
+      - name: Native Windows build and selftest
+        shell: powershell
+        run: |
+          ./scripts/Build-VmManagement.ps1
+          $env:SMART_HOME_TEST_NODE = (Get-Command node.exe).Source
+          ./build/vm-management/VmManagement.exe selftest
+          if ($LASTEXITCODE -ne 0) { throw 'Native selftest failed' }
+      - name: Restricted identity integration
+        shell: powershell
+        run: ./scripts/Test-VmManagementIntegration.ps1 -Layout wrapper
+      - name: Package pinned candidate
+        shell: powershell
+        run: ./scripts/Package-VmManagement.ps1 -Commit '${{ github.event.pull_request.head.sha }}'
+      - name: Upload candidate without publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflight-release-candidate-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: error
+          path: |
+            build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha }}.zip
+            build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha }}.zip.sha256
+            build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha }}.exe
+            build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha }}.exe.sha256
