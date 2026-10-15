@@ -1,0 +1,82 @@
+name: Preflight release candidate validation
+on:
+  pull_request:
+    paths:
+      - 'server/client.js'
+      - 'server/index.js'
+      - 'server/update.js'
+      - 'test/upload.test.js'
+      - 'test/mcp-upload.test.js'
+      - 'package.json'
+      - 'plugin.json'
+      - '.codex-plugin/plugin.json'
+      - '.github/workflows/preflight-release-candidate.yml'
+permissions:
+  contents: read
+jobs:
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Verify manifest agreement
+        run: node -e "const fs=require('fs');const v=require('./package.json').version;for(const p of ['plugin.json','.codex-plugin/plugin.json'])if(JSON.parse(fs.readFileSync(p)).version!==v)process.exit(1)"
+      - name: Syntax and full suite
+        run: |
+          npm run check
+          npm test
+      - name: Native Windows build and selftest
+        shell: powershell
+        run: |
+          ./scripts/Build-VmManagement.ps1
+          $env:SMART_HOME_TEST_NODE = (Get-Command node.exe).Source
+          ./build/vm-management/VmManagement.exe selftest
+          if ($LASTEXITCODE -ne 0) { throw 'Native selftest failed' }
+      - name: Restricted identity integration
+        shell: powershell
+        run: ./scripts/Test-VmManagementIntegration.ps1 -Layout wrapper
+      - name: Package pinned candidate
+        shell: powershell
+        run: ./scripts/Package-VmManagement.ps1 -Commit '${{ github.event.pull_request.head.sha }}'
+      - name: Record pinned package digests
+        shell: powershell
+        run: |
+          Get-Content build/*.sha256
+          Get-FileHash -Algorithm SHA256 build/SmartHome-VmManagement-*.zip, build/SmartHome-VmManagement-Setup-*.exe | Format-Table Hash,Path -AutoSize
+      - name: Verify broker source archive and stage allowlist
+        shell: powershell
+        run: |
+          $commit = '${{ github.event.pull_request.head.sha }}'
+          $archive = Join-Path $env:RUNNER_TEMP 'broker-source.zip'
+          Invoke-WebRequest -Uri ("https://codeload.github.com/cznkane/webcore-CLI/zip/" + $commit) -OutFile $archive -MaximumRedirection 0
+          $bytes = (Get-Item -LiteralPath $archive).Length
+          if ($bytes -gt 20000000) { throw 'Broker archive size limit exceeded' }
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          Write-Output ("STAGE_RELEASE_SOURCE_COMMIT=" + $commit)
+          Write-Output ("STAGE_RELEASE_SOURCE_ARCHIVE_SHA256=" + $digest)
+          Write-Output ("STAGE_RELEASE_SOURCE_ARCHIVE_BYTES=" + $bytes)
+          Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $prefix = 'webcore-CLI-' + $commit + '/'
+            $allowed = @('package.json','plugin.json','mcp.json','.mcp.json','.codex-plugin/plugin.json')
+            $selected = @($zip.Entries | Where-Object { $_.FullName.StartsWith($prefix) -and !$_.FullName.EndsWith('/') -and (($name = $_.FullName.Substring($prefix.Length)) -like 'server/*' -or $name -like 'test/*' -or $allowed -contains $name) } | ForEach-Object { $_.FullName.Substring($prefix.Length) })
+            $expected = @('server/client.js','server/index.js','server/update.js','test/upload.test.js','test/mcp-upload.test.js','package.json','plugin.json','.codex-plugin/plugin.json')
+            foreach ($item in $expected) { if ($selected -notcontains $item) { throw ('Missing staged file: ' + $item) } }
+            if ($selected | Where-Object { $_ -like 'windows/*' -or $_ -like 'scripts/*' -or $_ -like '.github/*' -or $_ -like 'docs/*' }) { throw 'Forbidden staged path' }
+            Write-Output ('STAGE_RELEASE_SELECTED_FILES=' + $selected.Count)
+          } finally { $zip.Dispose() }
+      - name: Upload candidate without publication
+        uses: actions/upload-artifact@v4
+        with:
+          name: preflight-release-candidate-${{ github.event.pull_request.head.sha }}
+          if-no-files-found: error
+          path: |
+            build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha }}.zip
+            build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha }}.zip.sha256
+            build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha }}.exe
+            build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha }}.exe.sha256

@@ -4,6 +4,9 @@ import { assertPistonIdentity } from './selection.js';
 import { assertPreparedBodyHash, assertPreparedDraftHash, verifyPistonUpdate } from './verification.js';
 
 // Shared by CLI and MCP so validation, hash checks, and upload decisions stay identical.
+export function encodePistonBody(body) {
+  return Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
+}
 export async function applyPistonUpdate(client, id, proposed, expectedRemoteHash, { expectedBodyHash, expectedProposedHash, readbackOptions } = {}) {
   const draft = structuredClone(proposed);
   const [live, devices, db] = await Promise.all([
@@ -26,7 +29,7 @@ async function applyWithLiveInventory(client, id, draft, expectedRemoteHash, liv
   const body = prepared.proposed;
   if (expectedProposedHash !== undefined) assertPreparedDraftHash(body, expectedProposedHash);
   if (expectedBodyHash !== undefined) assertPreparedBodyHash(body, expectedBodyHash);
-  const encoded = Buffer.from(JSON.stringify(body), 'utf8').toString('base64');
+  const encoded = encodePistonBody(body);
   const beforeCommit = async () => assertExpectedRemoteHash(await client.getPiston(id), expectedRemoteHash);
   const result = await client.savePiston(id, encoded, { beforeCommit });
   let verified;
