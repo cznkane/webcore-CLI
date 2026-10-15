@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { WebcoreClient, UPLOAD_URL_BYTE_LIMIT, UPLOAD_CHUNK_CHAR_LIMIT } from '../server/client.js';
-import { applyPistonUpdate } from '../server/update.js';
+import { applyPistonUpdate, encodePistonBody } from '../server/update.js';
 import { hashJson, pistonFingerprint, prepareUpdate, validatePiston } from '../server/piston.js';
 
 function fixture(options = {}) {
@@ -155,4 +155,61 @@ test('simultaneous uploads using the same session are rejected while staging', a
   release();
   await first;
   assert.equal(f.commits(), 1);
+});
+
+test('read-only preflight agrees with actual single and chunked save planning, without requests', async () => {
+  for (const encoded of ['YWJj', Buffer.alloc(3500, 0xff).toString('base64')]) {
+    const f = fixture();
+    const plan = f.client.preflightPistonUpload('pid', encoded);
+    assert.equal(f.calls.length, 0);
+    assert.equal(plan.pass, true);
+    assert.equal(plan.encoded_bytes, Buffer.byteLength(encoded));
+    assert.equal(plan.limits.url_byte_limit, UPLOAD_URL_BYTE_LIMIT);
+    assert.equal(plan.limits.chunk_char_limit, UPLOAD_CHUNK_CHAR_LIMIT);
+    assert.equal(plan.limits.max_chunks, 99);
+    assert.equal(JSON.stringify(plan).includes('secret'), false);
+    const saved = await f.client.savePiston('pid', encoded);
+    assert.equal(plan.mode, saved.upload.mode);
+    assert.equal(plan.chunks, saved.upload.chunks);
+    assert.equal(plan.max_request_url_bytes, Math.max(...f.calls.map(call => call.bytes)));
+    assert.equal(f.committed(), encoded);
+  }
+});
+test('preflight rejects oversize and URL overhead without any upload request', () => {
+  const f = fixture();
+  const oversized = f.client.preflightPistonUpload('pid', 'A'.repeat(1500 * 100));
+  assert.equal(oversized.pass, false);
+  assert.equal(oversized.code, 'UPLOAD_TOO_LARGE');
+  assert.equal(f.calls.length, 0);
+  const huge = fixture();
+  huge.client.base = 'http://hub/' + 'x'.repeat(2050);
+  const overhead = huge.client.preflightPistonUpload('pid', 'A'.repeat(3000));
+  assert.equal(overhead.pass, false);
+  assert.equal(overhead.code, 'UPLOAD_URL_LIMIT');
+  assert.equal(huge.calls.length, 0);
+});
+test('preflight exact boundary matches save planner and preserves credentials secrecy', () => {
+  const f = fixture();
+  let low = 1, high = 2048;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (f.client.requestUrlBytes('/intf/dashboard/piston/set', { id: 'pid', data: 'A'.repeat(mid) }) <= UPLOAD_URL_BYTE_LIMIT) low = mid;
+    else high = mid - 1;
+  }
+  const single = f.client.preflightPistonUpload('pid', 'A'.repeat(low));
+  const chunked = f.client.preflightPistonUpload('pid', 'A'.repeat(low + 1));
+  assert.equal(single.mode, 'single');
+  assert.equal(single.max_request_url_bytes <= UPLOAD_URL_BYTE_LIMIT, true);
+  assert.equal(chunked.mode, 'chunked');
+  assert.equal(chunked.pass, true);
+  assert.equal(f.calls.length, 0);
+  assert.equal(JSON.stringify([single, chunked]).includes('access-secret'), false);
+});
+test('preflight and apply share the exact UTF-8 body encoder', () => {
+  const body = { s: [{ t: 'action', label: 'school ✓' }], v: [] };
+  const encoded = encodePistonBody(body);
+  assert.deepEqual(JSON.parse(Buffer.from(encoded, 'base64').toString('utf8')), body);
+  const f = fixture();
+  assert.equal(f.client.preflightPistonUpload('pid', encoded).encoded_bytes, encoded.length);
+  assert.equal(f.calls.length, 0);
 });
