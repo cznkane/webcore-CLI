@@ -166,6 +166,12 @@ test('CLI and MCP prepare nested drafts and apply through bounded chunk URLs usi
   current = structuredClone(base);
   const preparedMcp = (await call('webcore_prepare_piston_update', { id: 'pid', proposed: draft })).structuredContent;
   assert.equal(preparedMcp.ok, true);
+  assert.equal(preparedMcp.transport_preflight.pass, true);
+  assert.equal(preparedMcp.transport_preflight.mode, 'chunked');
+  assert.ok(preparedMcp.transport_preflight.chunks > 1);
+  assert.equal(preparedMcp.transport_preflight.max_request_url_bytes <= 2048, true);
+  assert.equal(JSON.stringify(preparedMcp.transport_preflight).includes('secret'), false);
+  assert.equal(uploadedBodies.length, 1, 'prepare must not upload');
   const lookupMcp = (await call('webcore_lookup_language', {})).structuredContent;
   assert.equal(lookupMcp.condition_reference.reference_status, 'unverified');
   assert.equal(lookupMcp.language_compatibility.live.language_hash, preparedMcp.language_compatibility.live.language_hash);
