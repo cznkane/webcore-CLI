@@ -41,7 +41,12 @@ jobs:
       - name: Package pinned candidate
         shell: powershell
         run: ./scripts/Package-VmManagement.ps1 -Commit '${{ github.event.pull_request.head.sha }}'
-      - name: Record pinned package digests\n        shell: powershell\n        run: |\n          Get-Content build/*.sha256\n          Get-FileHash -Algorithm SHA256 build/SmartHome-VmManagement-*.zip, build/SmartHome-VmManagement-Setup-*.exe | Format-Table Hash,Path -AutoSize\n      - name: Upload candidate without publication
+      - name: Record pinned package digests
+        shell: powershell
+        run: |
+          Get-Content build/*.sha256
+          Get-FileHash -Algorithm SHA256 build/SmartHome-VmManagement-*.zip, build/SmartHome-VmManagement-Setup-*.exe | Format-Table Hash,Path -AutoSize
+      - name: Upload candidate without publication
         uses: actions/upload-artifact@v4
         with:
           name: preflight-release-candidate-${{ github.event.pull_request.head.sha }}
