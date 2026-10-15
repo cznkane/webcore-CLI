@@ -46,6 +46,29 @@ jobs:
         run: |
           Get-Content build/*.sha256
           Get-FileHash -Algorithm SHA256 build/SmartHome-VmManagement-*.zip, build/SmartHome-VmManagement-Setup-*.exe | Format-Table Hash,Path -AutoSize
+      - name: Verify broker source archive and stage allowlist
+        shell: powershell
+        run: |
+          $commit = '${{ github.event.pull_request.head.sha }}'
+          $archive = Join-Path $env:RUNNER_TEMP 'broker-source.zip'
+          Invoke-WebRequest -Uri ("https://codeload.github.com/cznkane/webcore-CLI/zip/" + $commit) -OutFile $archive -MaximumRedirection 0
+          $bytes = (Get-Item -LiteralPath $archive).Length
+          if ($bytes -gt 20000000) { throw 'Broker archive size limit exceeded' }
+          $digest = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          Write-Output ("STAGE_RELEASE_SOURCE_COMMIT=" + $commit)
+          Write-Output ("STAGE_RELEASE_SOURCE_ARCHIVE_SHA256=" + $digest)
+          Write-Output ("STAGE_RELEASE_SOURCE_ARCHIVE_BYTES=" + $bytes)
+          Add-Type -AssemblyName System.IO.Compression
+          $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+          try {
+            $prefix = 'webcore-CLI-' + $commit + '/'
+            $allowed = @('package.json','plugin.json','mcp.json','.mcp.json','.codex-plugin/plugin.json')
+            $selected = @($zip.Entries | Where-Object { $_.FullName.StartsWith($prefix) -and !$_.FullName.EndsWith('/') -and (($name = $_.FullName.Substring($prefix.Length)) -like 'server/*' -or $name -like 'test/*' -or $allowed -contains $name) } | ForEach-Object { $_.FullName.Substring($prefix.Length) })
+            $expected = @('server/client.js','server/index.js','server/update.js','test/upload.test.js','test/mcp-upload.test.js','package.json','plugin.json','.codex-plugin/plugin.json')
+            foreach ($item in $expected) { if ($selected -notcontains $item) { throw ('Missing staged file: ' + $item) } }
+            if ($selected | Where-Object { $_ -like 'windows/*' -or $_ -like 'scripts/*' -or $_ -like '.github/*' -or $_ -like 'docs/*' }) { throw 'Forbidden staged path' }
+            Write-Output ('STAGE_RELEASE_SELECTED_FILES=' + $selected.Count)
+          } finally { $zip.Dispose() }
       - name: Upload candidate without publication
         uses: actions/upload-artifact@v4
         with:
