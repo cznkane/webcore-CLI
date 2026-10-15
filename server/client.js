@@ -262,6 +262,33 @@ export class WebcoreClient {
     return chunks;
   }
 
+  // Read-only transport planning: same URL accounting and chunk planner as savePiston.
+  // No requests, no request URLs, and no credentials are returned.
+  preflightPistonUpload(id, encodedData) {
+    const limits = { url_byte_limit: UPLOAD_URL_BYTE_LIMIT, chunk_char_limit: UPLOAD_CHUNK_CHAR_LIMIT, max_chunks: MAX_UPLOAD_CHUNKS };
+    const encoded_bytes = typeof encodedData === 'string' ? Buffer.byteLength(encodedData, 'utf8') : 0;
+    if (!encoded_bytes) return { pass: false, code: 'EMPTY_UPLOAD', encoded_bytes, limits };
+    const single_url_bytes = this.requestUrlBytes('/intf/dashboard/piston/set', { id, data: encodedData });
+    if (single_url_bytes <= UPLOAD_URL_BYTE_LIMIT) {
+      return { pass: true, mode: 'single', encoded_bytes, chunks: 1, largest_chunk_chars: encodedData.length,
+        max_request_url_bytes: single_url_bytes, limits };
+    }
+    try {
+      const chunks = this.planPistonChunks(id, encodedData);
+      const requestBytes = [
+        this.requestUrlBytes('/intf/dashboard/piston/set.start', { id, chunks: chunks.length }),
+        this.requestUrlBytes('/intf/dashboard/piston/set.end', { id }),
+        ...chunks.map((chunk, index) => this.requestUrlBytes('/intf/dashboard/piston/set.chunk', { id, chunk: index, data: chunk }))
+      ];
+      return { pass: true, mode: 'chunked', encoded_bytes, chunks: chunks.length,
+        largest_chunk_chars: Math.max(...chunks.map(chunk => chunk.length)),
+        max_request_url_bytes: Math.max(...requestBytes), limits };
+    } catch (error) {
+      if (!['UPLOAD_TOO_LARGE', 'UPLOAD_URL_LIMIT', 'EMPTY_UPLOAD'].includes(error.code)) throw error;
+      return { pass: false, code: error.code, encoded_bytes, limits };
+    }
+  }
+
   async uploadRequest(path, params, trace) {
     const url_bytes = this.requestUrlBytes(path, params);
     this.debug?.(`upload path=${path}; url bytes=${url_bytes}; query values omitted`);
