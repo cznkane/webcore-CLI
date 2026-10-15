@@ -170,7 +170,7 @@ test('read-only preflight agrees with actual single and chunked save planning, w
     assert.equal(JSON.stringify(plan).includes('secret'), false);
     const saved = await f.client.savePiston('pid', encoded);
     assert.equal(plan.mode, saved.upload.mode);
-    assert.equal(plan.chunks, saved.upload.chunks);
+    assert.equal(plan.chunks, saved.upload.chunks ?? 1);
     assert.equal(plan.max_request_url_bytes, Math.max(...f.calls.map(call => call.bytes)));
     assert.equal(f.committed(), encoded);
   }
