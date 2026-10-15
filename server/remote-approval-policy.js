@@ -11,8 +11,8 @@ const exactKeys = (obj, keys) => obj && typeof obj === 'object' && !Array.isArra
 const equal = (a,b) => typeof a === 'string' && typeof b === 'string' &&
   Buffer.byteLength(a) === Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 export function validateRemoteApproval({request, session, submission, origin, now = Date.now()}) {
-  if (!exactKeys(request,['requestId','operation','commit','sha256','expectedCurrentSha256','expiresAt','status'])) return {ok:false,reason:'invalid_request'};
-  if (!HEX48.test(request.requestId) || !OPERATIONS.has(request.operation) || !HEX40.test(request.commit) ||
+  if (!exactKeys(request,['requestId','targetMachineId','nativeOperationId','operation','commit','sha256','expectedCurrentSha256','expiresAt','status'])) return {ok:false,reason:'invalid_request'};
+  if (!HEX48.test(request.requestId) || !/^machine:[a-z0-9][a-z0-9-]{1,63}$/.test(request.targetMachineId) || !/^native:[a-z0-9_]{3,64}$/.test(request.nativeOperationId) || request.nativeOperationId !== 'native:' + request.operation || !OPERATIONS.has(request.operation) || !HEX40.test(request.commit) ||
       !HEX64.test(request.sha256) || !HEX64.test(request.expectedCurrentSha256) || request.status !== 'pending') return {ok:false,reason:'invalid_scope'};
   const expiry = Date.parse(request.expiresAt);
   if (!Number.isFinite(expiry) || expiry <= now || expiry > now + 5*60_000) return {ok:false,reason:'expired_or_invalid'};
@@ -23,9 +23,9 @@ export function validateRemoteApproval({request, session, submission, origin, no
       !Number.isFinite(session.expiresAt) || session.expiresAt <= now ||
       typeof origin !== 'string' || !origin.startsWith('https://') || origin !== session.origin)
     return {ok:false,reason:'authentication_required'};
-  if (!exactKeys(submission,['action','requestId','operation','commit','sha256','expectedCurrentSha256','csrf'])) return {ok:false,reason:'invalid_submission'};
+  if (!exactKeys(submission,['action','requestId','targetMachineId','nativeOperationId','operation','commit','sha256','expectedCurrentSha256','csrf'])) return {ok:false,reason:'invalid_submission'};
   if (!['approve','deny'].includes(submission.action) || !equal(submission.csrf,session.csrf) ||
-      !equal(submission.requestId,request.requestId) || submission.operation !== request.operation ||
+      !equal(submission.requestId,request.requestId) || submission.targetMachineId !== request.targetMachineId || submission.nativeOperationId !== request.nativeOperationId || submission.operation !== request.operation ||
       !equal(submission.commit,request.commit) || !equal(submission.sha256,request.sha256) ||
       !equal(submission.expectedCurrentSha256,request.expectedCurrentSha256)) return {ok:false,reason:'scope_or_csrf_mismatch'};
   return {ok:true, action:submission.action, requestId:request.requestId, humanId:session.humanId};
