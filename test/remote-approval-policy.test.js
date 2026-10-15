@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {validateRemoteApproval} from '../server/remote-approval-policy.js';
 const now=Date.parse('2026-10-15T12:00:00Z');
-const request={requestId:'a'.repeat(48),operation:'deploy_release',commit:'b'.repeat(40),sha256:'c'.repeat(64),expectedCurrentSha256:'d'.repeat(64),expiresAt:new Date(now+60000).toISOString(),status:'pending'};
+const request={requestId:'a'.repeat(48),targetMachineId:'machine:terminal',nativeOperationId:'native:deploy_release',operation:'deploy_release',commit:'b'.repeat(40),sha256:'c'.repeat(64),expectedCurrentSha256:'d'.repeat(64),expiresAt:new Date(now+60000).toISOString(),status:'pending'};
 const session={humanId:'operator:123',requesterId:'mcp-agent',authenticatedAt:now-1000,authMethod:'webauthn-user-verified',csrf:'secret-token',origin:'https://approvals.example.test',expiresAt:now+60000};
-const submission={action:'approve',requestId:request.requestId,operation:request.operation,commit:request.commit,sha256:request.sha256,expectedCurrentSha256:request.expectedCurrentSha256,csrf:session.csrf};
+const submission={action:'approve',requestId:request.requestId,targetMachineId:request.targetMachineId,nativeOperationId:request.nativeOperationId,operation:request.operation,commit:request.commit,sha256:request.sha256,expectedCurrentSha256:request.expectedCurrentSha256,csrf:session.csrf};
 const check=(changes={})=>validateRemoteApproval({request:{...request,...changes.request},session:{...session,...changes.session},submission:{...submission,...changes.submission},origin:changes.origin??session.origin,now});
 test('exact independently authenticated scope accepted by policy only',()=>assert.equal(check().ok,true));
 for(const [name,change] of Object.entries({
@@ -14,6 +14,9 @@ for(const [name,change] of Object.entries({
   swappedCommit:{submission:{commit:'f'.repeat(40)}},
   swappedRequest:{submission:{requestId:'f'.repeat(48)}},
   swappedOperation:{submission:{operation:'rollback_release'}},
+  swappedTarget:{submission:{targetMachineId:'machine:other'}},
+  swappedNativeOperation:{submission:{nativeOperationId:'native:rollback_release'}},
+  invalidNativeIdentity:{request:{nativeOperationId:'native:rollback_release'}},
   staleCurrent:{submission:{expectedCurrentSha256:'e'.repeat(64)}},
   csrf:{submission:{csrf:'bad'}},
   origin:{origin:'https://attacker.example.test'},
