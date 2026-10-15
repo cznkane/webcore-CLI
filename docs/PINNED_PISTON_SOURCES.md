@@ -1,6 +1,6 @@
 # Pinned piston data handoff
 
-Status: development candidate; not installed. No new live-write approval is implied.
+Status: 0.4.17 release candidate; not installed. No new live-write approval is implied.
 
 The existing prepare and apply tools accept exactly one of `proposed` or `source`.
 The source option avoids transcribing a large nested piston object through chat.

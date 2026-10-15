@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const execute = promisify(execFile);
 
@@ -84,7 +84,7 @@ test('CLI and MCP prepare nested drafts and apply through bounded chunk URLs usi
   const source = { commit: 'a'.repeat(40), path: 'school_calendar/cutover/2026-10-14/resized_test_candidates/TEST_1_01.json', sha256: createHash('sha256').update(sourceText).digest('hex') };
   const preload = join(temp, 'source-fixture.mjs');
   await writeFile(preload, `const original = globalThis.fetch; globalThis.fetch = (url, options) => String(url).startsWith('https://raw.githubusercontent.com/cznkane/smart-home-hubitat/') ? Promise.resolve(new Response(${JSON.stringify(sourceText)})) : original(url, options);`);
-  const child = spawn(process.execPath, ['--import', preload, fileURLToPath(new URL('../server/index.js', import.meta.url))], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['--import', pathToFileURL(preload).href, fileURLToPath(new URL('../server/index.js', import.meta.url))], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   const pending = new Map();
   let requestId = 0;
   const lines = createInterface({ input: child.stdout });
@@ -99,11 +99,13 @@ test('CLI and MCP prepare nested drafts and apply through bounded chunk URLs usi
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
   });
   t.after(async () => {
-    const exit = once(child, 'exit');
-    child.stdin.end();
-    const kill = setTimeout(() => child.kill(), 1000);
-    await exit;
-    clearTimeout(kill);
+    if (child.exitCode === null && child.signalCode === null) {
+      const exit = once(child, 'exit');
+      child.stdin.end();
+      const kill = setTimeout(() => child.kill(), 1000);
+      await exit;
+      clearTimeout(kill);
+    }
     lines.close();
     hub.closeAllConnections();
     await new Promise(resolve => hub.close(resolve));

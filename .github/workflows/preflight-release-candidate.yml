@@ -5,12 +5,17 @@ on:
       - 'server/client.js'
       - 'server/index.js'
       - 'server/update.js'
+      - 'server/piston-source.js'
+      - 'test/piston-source.test.js'
       - 'test/upload.test.js'
       - 'test/mcp-upload.test.js'
       - 'package.json'
       - 'plugin.json'
       - '.codex-plugin/plugin.json'
       - '.github/workflows/preflight-release-candidate.yml'
+concurrency:
+  group: preflight-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -65,7 +70,7 @@ jobs:
             $prefix = 'webcore-CLI-' + $commit + '/'
             $allowed = @('package.json','plugin.json','mcp.json','.mcp.json','.codex-plugin/plugin.json')
             $selected = @($zip.Entries | Where-Object { $_.FullName.StartsWith($prefix) -and !$_.FullName.EndsWith('/') -and (($name = $_.FullName.Substring($prefix.Length)) -like 'server/*' -or $name -like 'test/*' -or $allowed -contains $name) } | ForEach-Object { $_.FullName.Substring($prefix.Length) })
-            $expected = @('server/client.js','server/index.js','server/update.js','test/upload.test.js','test/mcp-upload.test.js','package.json','plugin.json','.codex-plugin/plugin.json')
+            $expected = @('server/piston-source.js','test/piston-source.test.js','server/client.js','server/index.js','server/update.js','test/upload.test.js','test/mcp-upload.test.js','package.json','plugin.json','.codex-plugin/plugin.json')
             foreach ($item in $expected) { if ($selected -notcontains $item) { throw ('Missing staged file: ' + $item) } }
             if ($selected | Where-Object { $_ -like 'windows/*' -or $_ -like 'scripts/*' -or $_ -like '.github/*' -or $_ -like 'docs/*' }) { throw 'Forbidden staged path' }
             Write-Output ('STAGE_RELEASE_SELECTED_FILES=' + $selected.Count)
@@ -80,3 +85,4 @@ jobs:
             build/SmartHome-VmManagement-${{ github.event.pull_request.head.sha }}.zip.sha256
             build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha }}.exe
             build/SmartHome-VmManagement-Setup-${{ github.event.pull_request.head.sha }}.exe.sha256
+
