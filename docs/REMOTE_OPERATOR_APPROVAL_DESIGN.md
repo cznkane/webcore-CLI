@@ -30,3 +30,11 @@ Browser -> independent TLS reverse proxy / IdP -> dedicated approval gateway -> 
 - [ ] Explicit release/deployment approval and live acceptance
 
 Related Smart Home issue: https://github.com/cznkane/smart-home-hubitat/issues/47
+
+## Increment 2 — concrete relying party and isolated session boundary
+
+Selected implementation: **Node.js built-in crypto WebAuthn assertion verification (ES256 / P-256)** in `server/remote-operator-webauthn.js`, with RP ID `approvals.example.test` used only as a test fixture; the actual private HTTPS RP hostname must be selected and security-reviewed before deployment. No third-party authentication flags are trusted. Verification checks signed authenticator data, SHA-256 RP ID hash, exact client origin and challenge, UP+UV flags, credential public key, signature, monotonic signature counter and atomic challenge consumption supplied by a trusted store. `RemoteOperatorSessions` creates short-lived random session tokens only from successful cryptographic verification; it stores token hashes and supports revocation. These components do not run a listener or contact the native broker.
+
+**Unimplemented critical trust work:** credential registration/attestation policy and operator identity proofing; durable transactional challenge/counter/session store; session cookie/CSRF HTTP adapter; approved HTTPS network architecture; native gateway SID/executable trust; persistent one-use approval ledger and audit; machine identity attestation and native operation ID mapping; complete Windows integration. The policy helper's session fields remain caller-provided in unit tests and MUST NOT be treated as authentication evidence without the gateway-owned session lookup. Machine identity and native operation IDs are now explicit in policy requests/submissions but not yet broker-attested.
+
+No operational change or approval issuance is possible from this increment.
