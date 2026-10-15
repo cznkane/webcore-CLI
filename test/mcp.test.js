@@ -41,18 +41,19 @@ test('stdio MCP exposes list scopes, guarded selection, and diagnostics', async 
     const item = response.result.tools.find(candidate => candidate.name === name);
     assert.equal(item.annotations?.readOnlyHint, true, name);
     assert.equal(item.annotations?.destructiveHint, false, name);
-    assert.equal(item.annotations?.openWorldHint, false, name);
+    assert.equal(item.annotations?.openWorldHint, ['webcore_prepare_piston_update', 'webcore_apply_piston_update'].includes(name), name);
   }
   for (const name of ['webcore_create_piston', 'webcore_pause_piston', 'webcore_resume_piston']) {
     const item = response.result.tools.find(candidate => candidate.name === name);
     assert.equal(item.annotations?.readOnlyHint, false, name);
     assert.equal(item.annotations?.destructiveHint, false, name);
-    assert.equal(item.annotations?.openWorldHint, false, name);
+    assert.equal(item.annotations?.openWorldHint, ['webcore_prepare_piston_update', 'webcore_apply_piston_update'].includes(name), name);
   }
   for (const name of ['webcore_apply_piston_update', 'webcore_test_piston']) {
     const item = response.result.tools.find(candidate => candidate.name === name);
     assert.equal(item.annotations?.readOnlyHint, false, name);
     assert.equal(item.annotations?.destructiveHint, true, name);
-    assert.equal(item.annotations?.openWorldHint, false, name);
+    assert.equal(item.annotations?.openWorldHint, ['webcore_prepare_piston_update', 'webcore_apply_piston_update'].includes(name), name);
   }
 });
+
