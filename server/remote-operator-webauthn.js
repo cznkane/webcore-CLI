@@ -2,13 +2,14 @@
 // Credential enrollment and challenge storage must be supplied by a separately trusted gateway.
 import {createHash, createPublicKey, verify as verifySignature, timingSafeEqual} from 'node:crypto';
 const b64url = value => { if(typeof value!=='string'||! /^[A-Za-z0-9_-]+$/.test(value)) throw Error('invalid_encoding'); return Buffer.from(value,'base64url'); };
+const validChallenge = value => typeof value==='string' && /^[A-Za-z0-9_-]{43}$/.test(value) && Buffer.from(value,'base64url').length===32 && Buffer.from(value,'base64url').toString('base64url')===value;
 const same=(a,b)=>a.length===b.length&&timingSafeEqual(a,b);
 const hash=s=>createHash('sha256').update(s).digest();
 export async function verifyOperatorAssertion({assertion, credential, challenge, expectedOrigin, rpId, now=Date.now(), consumeChallenge}) {
   try {
     if(!assertion||!credential||typeof consumeChallenge!=='function'||typeof expectedOrigin!=='string'||!expectedOrigin.startsWith('https://')||typeof rpId!=='string'||!rpId) throw Error('invalid_context');
     if(typeof credential.operatorId!=='string'||!credential.operatorId||typeof credential.publicKeyPem!=='string'||!Number.isSafeInteger(credential.signCount)||credential.signCount<0) throw Error('credential');
-    if(typeof challenge!=='object'||typeof challenge.value!=='string'||!Number.isFinite(challenge.expiresAt)||challenge.expiresAt<=now) throw Error('challenge');
+    if(typeof challenge!=='object'||!validChallenge(challenge.value)||!Number.isFinite(challenge.expiresAt)||challenge.expiresAt<=now) throw Error('challenge');
     const raw=b64url(assertion.rawId),clientBytes=b64url(assertion.response.clientDataJSON),auth=b64url(assertion.response.authenticatorData),sig=b64url(assertion.response.signature);
     if(!same(raw,b64url(credential.credentialId))||auth.length<37||sig.length<8) throw Error('credential_mismatch');
     const client=JSON.parse(clientBytes.toString('utf8'));
