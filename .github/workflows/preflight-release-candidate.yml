@@ -59,6 +59,7 @@ jobs:
           Write-Output ("STAGE_RELEASE_SOURCE_ARCHIVE_SHA256=" + $digest)
           Write-Output ("STAGE_RELEASE_SOURCE_ARCHIVE_BYTES=" + $bytes)
           Add-Type -AssemblyName System.IO.Compression
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead($archive)
           try {
             $prefix = 'webcore-CLI-' + $commit + '/'
