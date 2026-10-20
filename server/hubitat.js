@@ -35,6 +35,30 @@ export class HubitatClient {
     return response.json();
   }
 
+  async setSwitch(id, command, authorized = false) {
+    if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric Hubitat device ID is required.');
+    if (command !== 'on' && command !== 'off') throw new Error('Only on/off switch commands are supported.');
+    if (authorized !== true) {
+      const error = new Error('Physical device control requires explicit authorization.');
+      error.code = 'HUBITAT_COMMAND_NOT_AUTHORIZED';
+      throw error;
+    }
+    const devices = await this.listDevices();
+    if (!Array.isArray(devices) || !devices.some(device => String(device.id) === String(id))) {
+      const error = new Error('Device is not authorized by this Maker API instance.');
+      error.code = 'HUBITAT_DEVICE_NOT_AUTHORIZED';
+      throw error;
+    }
+    const detail = await this.getDevice(id);
+    const commands = detail?.commands;
+    if (!Array.isArray(commands) || !commands.some(item => (typeof item === 'string' ? item : item?.command ?? item?.name) === command)) {
+      const error = new Error('Requested switch command is not supported by this device.');
+      error.code = 'HUBITAT_COMMAND_UNSUPPORTED';
+      throw error;
+    }
+    return { device_id: String(id), command, result: await this.request(`devices/${encodeURIComponent(id)}/${command}`) };
+  }
+
   async listDevices() {
     return this.request('devices');
   }
