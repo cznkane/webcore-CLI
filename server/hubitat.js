@@ -43,4 +43,26 @@ export class HubitatClient {
     if (!id) throw new Error('Hubitat device ID is required.');
     return this.request(`devices/${encodeURIComponent(id)}`);
   }
+  async getDeviceEvents(id, limit = 50) {
+    if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric Hubitat device ID is required.');
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Event limit must be between 1 and 100.');
+    // Check the device against the Maker API authorization scope before reading its events.
+    const devices = await this.listDevices();
+    if (!Array.isArray(devices) || !devices.some(device => String(device.id) === String(id))) {
+      const error = new Error('Device is not authorized by this Maker API instance.');
+      error.code = 'HUBITAT_DEVICE_NOT_AUTHORIZED';
+      throw error;
+    }
+    // Maker API event history is supported on some Hubitat versions/installations.
+    // An HTTP failure is reported explicitly rather than silently returning no events.
+    const response = await this.request(`devices/${encodeURIComponent(id)}/events`);
+    const events = Array.isArray(response) ? response : response?.events;
+    if (!Array.isArray(events)) {
+      const error = new Error('Hubitat did not return a recognized device-events payload.');
+      error.code = 'HUBITAT_EVENTS_UNSUPPORTED';
+      throw error;
+    }
+    return { device_id: String(id), events: events.slice(0, limit), returned: Math.min(events.length, limit), truncated: events.length > limit };
+  }
+
 }
