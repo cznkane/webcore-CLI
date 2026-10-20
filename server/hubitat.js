@@ -35,6 +35,18 @@ export class HubitatClient {
     return response.json();
   }
 
+  async getDeviceSnapshot(id, limit = 50) {
+    if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric Hubitat device ID is required.');
+    const devices = await this.listDevices();
+    if (!Array.isArray(devices) || !devices.some(device => String(device.id) === String(id))) {
+      const error = new Error('Device is not authorized by this Maker API instance.');
+      error.code = 'HUBITAT_DEVICE_NOT_AUTHORIZED';
+      throw error;
+    }
+    const [device, history] = await Promise.all([this.getDevice(id), this.getDeviceEvents(id, limit)]);
+    return { device_id: String(id), device, history };
+  }
+
   async setSwitch(id, command, authorized = false) {
     if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric Hubitat device ID is required.');
     if (command !== 'on' && command !== 'off') throw new Error('Only on/off switch commands are supported.');
