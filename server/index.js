@@ -99,14 +99,13 @@ async function invoke(name, a) {
     }
     case 'webcore_export_pistons':
     case 'webcore_analyze_pistons': {
-      const inventory = await c.listPistons();
-      const pistons = Array.isArray(inventory) ? inventory : Array.isArray(inventory?.pistons) ? inventory.pistons : Object.values(inventory?.pistons ?? inventory ?? {});
+      const pistons = await c.listPistons();
       if (!Array.isArray(pistons)) throw new Error('Unrecognized piston inventory.');
       const limit = a.limit ?? 50;
       if (pistons.length > limit) throw new Error('Piston inventory exceeds requested bound; increase limit up to 100.');
       const definitions = [];
       for (const item of pistons) {
-        const id = item?.id ?? item?.meta?.id;
+        const id = item?.id ?? item?.i ?? item?.meta?.id;
         if (typeof id !== 'string' || !id) throw new Error('Piston inventory contains an invalid ID.');
         definitions.push({ id, definition: await c.getPiston(id) });
       }
