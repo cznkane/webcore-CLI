@@ -10,14 +10,17 @@ Tracking: #19. Implementation PR: #20.
 | Detailed device inventory | `hubitat_list_device_details` | Read |
 | Device attributes and details | `hubitat_get_device` | Read |
 | Recent device events | `hubitat_get_device_events` | Read |
-| Historical driver and app logs (opt-in admin endpoint) | `hubitat_get_driver_logs` | Read, local opt-in |\n| Device diagnostic snapshot | `hubitat_get_device_snapshot` | Read |
+| Historical driver and app logs (opt-in admin endpoint) | `hubitat_get_driver_logs` | Read, local opt-in |
+| Device diagnostic snapshot | `hubitat_get_device_snapshot` | Read |
 | Device supported commands | `hubitat_get_device_commands` | Read |
 | One device attribute | `hubitat_get_device_attribute` | Read |
 | Modes inventory | `hubitat_list_modes` | Read |
 | Current mode | `hubitat_get_current_mode` | Read |
-| Exposed hub variables | `hubitat_list_hub_variables` | Read |
-| Exposed hub variable detail | `hubitat_get_hub_variable` | Read |
 | Hubitat Safety Monitor status | `hubitat_get_hsm_status` | Read |
+| Mode changes by validated ID | `hubitat_set_mode` | Write, explicit authorization |
+| HSM arm/disarm | `hubitat_set_hsm` | Write, explicit authorization |
+| Multi-argument device commands (bounded scalar arguments) | `hubitat_send_device_command_args` | Write, explicit authorization |
+| Configure or clear event POST destination | `hubitat_set_event_callback`, `hubitat_clear_event_callback` | Write, explicit authorization and preapproved HTTPS host |
 | On/off switch command | `hubitat_set_switch` | Write, explicit authorization |
 | Advertised device command, zero or one scalar argument | `hubitat_send_device_command` | Write, explicit authorization |
 
@@ -41,9 +44,10 @@ Maker API authorization is controlled on the hub. Unsupported or unauthorized en
 
 - **Live streaming driver/app logs**: this release implements historical logs via the hub's local `/logs/past/json` endpoint, but not live WebSocket `/logsocket` streaming. The historical endpoint is separate from Maker API, is not a stable public API, and may require an authenticated admin session on some hub configurations. Set `hubitat.logsEnabled=true` in the private local config to opt in; never send Maker API credentials to the admin log endpoint. Filter by `deviceId` to restrict to an authorized Maker API device.
 - **Hub administration, firmware, hub backup, arbitrary Groovy execution, Zigbee/Z-Wave radio management**: not Maker API features; deliberately not exposed through this credential.
-- **Maker API multiple positional device command arguments**: not safely represented by the single optional secondary value endpoint; not exposed.
+- **Structured JSON device arguments**: this release supports bounded scalar comma-separated positional arguments but not JSON objects or arrays. Verify command-specific parameter requirements before using live commands.
 - **Hubitat lock/unlock and PIN-code management**: not exposed through the generic command tool.
-- **Hubitat mode changes and HSM arming**: not enabled by this release until their exact endpoint/authorization semantics are verified against the target hub.
+- **Hub variables**: use explicitly exposed connector devices; direct `/hubvariables` Maker API endpoints were removed because they are not standard Maker API endpoints.
+- **Event receiver**: Maker API can POST events to an explicitly configured HTTPS URL, but this plugin does not run a public inbound HTTP receiver. The callback is a shared Maker API setting and must not be overwritten without confirming its existing owner.
 
 ## Release gates
 
