@@ -25,6 +25,9 @@ const tools = [
   { name: 'hubitat_get_device', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Get the current Maker API details and attributes for one explicitly authorized Hubitat device by exact device ID. Read-only; does not execute device commands.', inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false } },
   { name: 'hubitat_get_device_events', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read up to 100 recent events for an authorized Hubitat device. No commands.', inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9]+$' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['id'], additionalProperties: false } },
 
+  { name: 'webcore_refresh_device_states', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read fresh states for authorized webCoRE devices.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'webcore_export_pistons', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Export up to 100 piston definitions in a bounded JSON snapshot.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false } },
+  { name: 'webcore_analyze_pistons', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Analyze up to 100 pistons for device references, repeated references and missing authorized devices.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false } },
   { name: 'webcore_status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Check the configured local or explicitly approved Hubitat Cloud connection. Report live webcore_version (coreVersion) and webcore_he_version (heVersion), separately from plugin_version. Call before drafting conditions; do not infer the live webCoRE version from the bundled reference or a screenshot. Uses a dedicated dashboard session; snapshot_source distinguishes a new hub snapshot from a fresh unchanged confirmation. HTTP 200 alone is insufficient.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_diagnose', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Run read-only connection, dashboard response, piston-list, and authorized-device checks. Reports the running plugin_version and upload limits so installed/local version mismatches can be identified. Call after a tool error, unexpected empty result, or mismatch with the CLI. It retries empty piston results and returns sanitized status/content-type/error details without endpoint URLs, access tokens, session tokens, piston names, or device IDs. Upload failures also carry request_trace in their error details; do not perform a write just to diagnose it. Uses the shared dashboard change-detection protocol. transport_ok describes HTTP/parsing only; dashboard ok requires a usable session snapshot. Inspect snapshot_source and load_attempts. Missing/malformed/duplicate piston records are errors, never zero counts.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices selected and authorized in this webCoRE instance, with capabilities, attributes, current values, commands and argument constraints.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -75,6 +78,39 @@ async function invoke(name, a) {
   }
 
   switch (name) {
+    case 'webcore_refresh_device_states': {
+      const devices = await c.listDevices();
+      return { devices, refreshed: true };
+    }
+    case 'webcore_export_pistons':
+    case 'webcore_analyze_pistons': {
+      const inventory = await c.listPistons();
+      const pistons = Array.isArray(inventory) ? inventory : Array.isArray(inventory?.pistons) ? inventory.pistons : Object.values(inventory?.pistons ?? inventory ?? {});
+      if (!Array.isArray(pistons)) throw new Error('Unrecognized piston inventory.');
+      const limit = a.limit ?? 50;
+      if (pistons.length > limit) throw new Error('Piston inventory exceeds requested bound; increase limit up to 100.');
+      const definitions = [];
+      for (const item of pistons) {
+        const id = item?.id ?? item?.meta?.id;
+        if (typeof id !== 'string' || !id) throw new Error('Piston inventory contains an invalid ID.');
+        definitions.push({ id, definition: await c.getPiston(id) });
+      }
+      if (name === 'webcore_export_pistons') return { count: definitions.length, pistons: definitions };
+      const devices = await c.listDevices();
+      const authorized = new Set(Object.keys(devices));
+      const refs = [];
+      const visit = (value, piston, depth = 0) => {
+        if (depth > 60 || value == null) return;
+        if (Array.isArray(value)) { for (const v of value) visit(v, piston, depth + 1); return; }
+        if (typeof value !== 'object') return;
+        for (const [key, child] of Object.entries(value)) {
+          if (/^(device|deviceId|device_id)$/i.test(key) && (typeof child === 'string' || typeof child === 'number')) refs.push({ piston, device_id: String(child), authorized: authorized.has(String(child)) });
+          else visit(child, piston, depth + 1);
+        }
+      };
+      for (const entry of definitions) visit(entry.definition, entry.id);
+      return { piston_count: definitions.length, references: refs.slice(0, 1000), reference_count: refs.length, incomplete: refs.length > 1000, heuristic: true };
+    }
     case 'webcore_status': { const r = await c.getDashboard(); return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo.snapshot_source, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null }; }
     case 'webcore_diagnose': return runDiagnostics(c);
     case 'webcore_list_devices': return { devices: await c.listDevices() };
