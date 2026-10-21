@@ -208,7 +208,14 @@ async function invoke(name, a) {
         if (matches.length >= 500) break;
         const id = item.id ?? item.i;
         if (typeof id !== 'string') throw new Error('Invalid piston ID in inventory.');
-        visit(await c.getPiston(id), id, ' { const r = await c.getDashboard(); return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo.snapshot_source, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null }; }
+        visit(await c.getPiston(id), id, '$', 0);
+      }
+      return { matches, scanned: inventory.length, truncated: matches.length >= 500 };
+    }
+    case 'webcore_status': {
+      const r = await c.getDashboard();
+      return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo?.snapshot_source ?? null, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null };
+    }
     case 'webcore_diagnose': return runDiagnostics(c);
     case 'webcore_list_devices': return { devices: await c.listDevices() };
     case 'webcore_get_device': {
