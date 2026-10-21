@@ -25,6 +25,29 @@ const tools = [
   { name: 'hubitat_get_device', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Get the current Maker API details and attributes for one explicitly authorized Hubitat device by exact device ID. Read-only; does not execute device commands.', inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false } },
   { name: 'hubitat_get_device_events', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read up to 100 recent events for an authorized Hubitat device. No commands.', inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9]+$' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['id'], additionalProperties: false } },
 
+  { name: 'hubitat_get_device_snapshot', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read device details and events.', inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9]+$' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['id'], additionalProperties: false } },
+  { name: 'webcore_refresh_device_states', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Refresh webCoRE authorized device states.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'webcore_export_pistons', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Export up to 100 piston definitions in a bounded JSON snapshot.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false } },
+  { name: 'webcore_analyze_pistons', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Analyze up to 100 pistons for device references, repeated references and missing authorized devices.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false } },
+  { name: 'webcore_piston_health_report', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read a bounded inventory and identify paused pistons and missing status metadata.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } }, required: [], additionalProperties: false } },
+  { name: 'webcore_compare_piston_definitions', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Compare two live piston definitions using deterministic content hashes; does not mutate.', inputSchema: { type: 'object', properties: { left_id: { type: 'string', minLength: 1 }, right_id: { type: 'string', minLength: 1 } }, required: ["left_id","right_id"], additionalProperties: false } },
+  { name: 'webcore_bulk_pause_resume', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Pause or resume up to 20 exact pistons. Requires explicit authorization and defaults to dry-run.', inputSchema: { type: 'object', properties: { ids: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1 } }, operation: { type: 'string', enum: ['pause','resume'] }, authorize_live_command: { type: 'boolean', const: true }, dry_run: { type: 'boolean' } }, required: ["ids","operation"], additionalProperties: false } },
+  { name: 'webcore_find_piston_references', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Find exact text references across up to 100 live piston definitions, with bounded paths and matches.', inputSchema: { type: 'object', properties: { text: { type: 'string', minLength: 2, maxLength: 100 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['text'], additionalProperties: false } },
+  { name: 'webcore_piston_backup', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read one live piston as a backup payload with its full-definition hash; no mutation.', inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 1 } }, required: ['id'], additionalProperties: false } },
+  { name: 'hubitat_set_switch', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_set_switch operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, command: { type: 'string', enum: ['on','off'] }, authorize_live_command: { type: 'boolean', const: true } }, required: ["id","command","authorize_live_command"], additionalProperties: false } },
+  { name: 'hubitat_get_driver_logs', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_get_driver_logs operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { deviceId: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 500 }, level: { type: 'string' }, contains: { type: 'string' } }, required: [], additionalProperties: false } },
+  { name: 'hubitat_list_modes', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_list_modes operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+  { name: 'hubitat_get_current_mode', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_get_current_mode operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+  { name: 'hubitat_list_device_details', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_list_device_details operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+  { name: 'hubitat_get_device_commands', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_get_device_commands operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ["id"], additionalProperties: false } },
+  { name: 'hubitat_get_device_attribute', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_get_device_attribute operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, attribute: { type: 'string' } }, required: ["id","attribute"], additionalProperties: false } },
+  { name: 'hubitat_get_hsm_status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Hubitat Maker API hubitat_get_hsm_status operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+  { name: 'hubitat_send_device_command', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_send_device_command operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, command: { type: 'string' }, value: { type: ['string','number','boolean'] }, authorize_live_command: { type: 'boolean', const: true } }, required: ["id","command","authorize_live_command"], additionalProperties: false } },
+  { name: 'hubitat_set_mode', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_set_mode operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { modeId: { type: 'string' }, authorize_live_command: { type: 'boolean', const: true } }, required: ["modeId","authorize_live_command"], additionalProperties: false } },
+  { name: 'hubitat_set_hsm', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_set_hsm operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { command: { type: 'string' }, authorize_live_command: { type: 'boolean', const: true } }, required: ["command","authorize_live_command"], additionalProperties: false } },
+  { name: 'hubitat_send_device_command_args', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_send_device_command_args operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { id: { type: 'string' }, command: { type: 'string' }, args: { type: 'array' }, authorize_live_command: { type: 'boolean', const: true } }, required: ["id","command","args","authorize_live_command"], additionalProperties: false } },
+  { name: 'hubitat_set_event_callback', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_set_event_callback operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { url: { type: 'string' }, authorize_live_command: { type: 'boolean', const: true } }, required: ["url","authorize_live_command"], additionalProperties: false } },
+  { name: 'hubitat_clear_event_callback', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Hubitat Maker API hubitat_clear_event_callback operation; live mutations require explicit authorization.', inputSchema: { type: 'object', properties: { authorize_live_command: { type: 'boolean', const: true } }, required: ["authorize_live_command"], additionalProperties: false } },
   { name: 'webcore_status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Check the configured local or explicitly approved Hubitat Cloud connection. Report live webcore_version (coreVersion) and webcore_he_version (heVersion), separately from plugin_version. Call before drafting conditions; do not infer the live webCoRE version from the bundled reference or a screenshot. Uses a dedicated dashboard session; snapshot_source distinguishes a new hub snapshot from a fresh unchanged confirmation. HTTP 200 alone is insufficient.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_diagnose', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Run read-only connection, dashboard response, piston-list, and authorized-device checks. Reports the running plugin_version and upload limits so installed/local version mismatches can be identified. Call after a tool error, unexpected empty result, or mismatch with the CLI. It retries empty piston results and returns sanitized status/content-type/error details without endpoint URLs, access tokens, session tokens, piston names, or device IDs. Upload failures also carry request_trace in their error details; do not perform a write just to diagnose it. Uses the shared dashboard change-detection protocol. transport_ok describes HTTP/parsing only; dashboard ok requires a usable session snapshot. Inspect snapshot_source and load_attempts. Missing/malformed/duplicate piston records are errors, never zero counts.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices selected and authorized in this webCoRE instance, with capabilities, attributes, current values, commands and argument constraints.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -56,11 +79,26 @@ async function invoke(name, a) {
     currentConfigHash = configHash;
   }
   const c = currentClient;
-  if (name === 'hubitat_list_devices' || name === 'hubitat_get_device' || name === 'hubitat_get_device_events') {
+  if (name === 'hubitat_list_devices' || name === 'hubitat_get_device' || name === 'hubitat_get_device_events' || name === 'hubitat_get_device_snapshot' || name === 'hubitat_set_switch' || name === 'hubitat_get_driver_logs' || name === 'hubitat_list_modes' || name === 'hubitat_get_current_mode' || name === 'hubitat_list_device_details' || name === 'hubitat_get_device_commands' || name === 'hubitat_get_device_attribute' || name === 'hubitat_get_hsm_status' || name === 'hubitat_send_device_command' || name === 'hubitat_set_mode' || name === 'hubitat_set_hsm' || name === 'hubitat_send_device_command_args' || name === 'hubitat_set_event_callback' || name === 'hubitat_clear_event_callback') {
     if (!config.hubitat) throw new Error('Hubitat Maker API is not configured.');
 
     const hubitat = new HubitatClient(config.hubitat);
 
+    if (name === 'hubitat_get_device_snapshot') return hubitat.getDeviceSnapshot(a.id, a.limit ?? 50);
+    if (name === 'hubitat_set_switch') return hubitat.setSwitch(a.id, a.command, a.authorize_live_command);
+    if (name === 'hubitat_get_driver_logs') return hubitat.getDriverLogs(a);
+    if (name === 'hubitat_list_modes') return { modes: await hubitat.listModes() };
+    if (name === 'hubitat_get_current_mode') return { mode: await hubitat.getCurrentMode() };
+    if (name === 'hubitat_list_device_details') return { devices: await hubitat.listDeviceDetails() };
+    if (name === 'hubitat_get_device_commands') return { commands: await hubitat.getDeviceCommands(a.id) };
+    if (name === 'hubitat_get_device_attribute') return { attribute: await hubitat.getDeviceAttribute(a.id, a.attribute) };
+    if (name === 'hubitat_get_hsm_status') return { hsm: await hubitat.getHsmStatus() };
+    if (name === 'hubitat_send_device_command') return hubitat.sendDeviceCommand(a.id, a.command, a.value, a.authorize_live_command);
+    if (name === 'hubitat_set_mode') return hubitat.setMode(a.modeId, a.authorize_live_command);
+    if (name === 'hubitat_set_hsm') return hubitat.setHsm(a.command, a.authorize_live_command);
+    if (name === 'hubitat_send_device_command_args') return hubitat.sendDeviceCommandArgs(a.id, a.command, a.args, a.authorize_live_command);
+    if (name === 'hubitat_set_event_callback') return hubitat.setEventCallback(a.url, a.authorize_live_command);
+    if (name === 'hubitat_clear_event_callback') return hubitat.clearEventCallback(a.authorize_live_command);
     if (name === 'hubitat_list_devices') {
       return { devices: await hubitat.listDevices() };
     }
@@ -75,7 +113,109 @@ async function invoke(name, a) {
   }
 
   switch (name) {
-    case 'webcore_status': { const r = await c.getDashboard(); return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo.snapshot_source, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null }; }
+    case 'webcore_refresh_device_states': {
+      const devices = await c.listDevices();
+      return { devices, refreshed: true };
+    }
+    case 'webcore_export_pistons':
+    case 'webcore_analyze_pistons': {
+      const pistons = await c.listPistons();
+      if (!Array.isArray(pistons)) throw new Error('Unrecognized piston inventory.');
+      const limit = a.limit ?? 50;
+      if (pistons.length > limit) throw new Error('Piston inventory exceeds requested bound; increase limit up to 100.');
+      const definitions = [];
+      for (const item of pistons) {
+        const id = item?.id ?? item?.i ?? item?.meta?.id;
+        if (typeof id !== 'string' || !id) throw new Error('Piston inventory contains an invalid ID.');
+        definitions.push({ id, definition: await c.getPiston(id) });
+      }
+      if (name === 'webcore_export_pistons') return { count: definitions.length, pistons: definitions };
+      const devices = await c.listDevices();
+      const authorized = new Set(Object.keys(devices));
+      const refs = [];
+      const visit = (value, piston, depth = 0) => {
+        if (depth > 60 || value == null) return;
+        if (Array.isArray(value)) { for (const v of value) visit(v, piston, depth + 1); return; }
+        if (typeof value !== 'object') return;
+        for (const [key, child] of Object.entries(value)) {
+          if (/^(device|deviceId|device_id)$/i.test(key) && (typeof child === 'string' || typeof child === 'number')) refs.push({ piston, device_id: String(child), authorized: authorized.has(String(child)) });
+          else visit(child, piston, depth + 1);
+        }
+      };
+      for (const entry of definitions) visit(entry.definition, entry.id);
+      return { piston_count: definitions.length, references: refs.slice(0, 1000), reference_count: refs.length, incomplete: refs.length > 1000, heuristic: true };
+    }
+    case 'webcore_piston_health_report': {
+      const pistons = await c.listPistons();
+      if (!Array.isArray(pistons)) throw new Error('Unrecognized piston inventory.');
+      const limit = a.limit ?? 100;
+      if (pistons.length > limit) throw new Error('Inventory exceeds requested report limit.');
+      return { count: pistons.length, pistons: pistons.map(p => ({
+        id: p.id ?? p.i, name: p.name ?? p.n,
+        paused: p.paused ?? p.p ?? null,
+        state: p.state ?? p.s ?? null,
+        status_available: p.paused !== undefined || p.p !== undefined || p.state !== undefined || p.s !== undefined
+      })), metadata_only: true };
+    }
+    case 'webcore_compare_piston_definitions': {
+      if (a.left_id === a.right_id) throw new Error('Provide two different piston IDs.');
+      const [left, right] = await Promise.all([c.getPiston(a.left_id), c.getPiston(a.right_id)]);
+      const leftHash = hashJson(left), rightHash = hashJson(right);
+      return { left_id: a.left_id, right_id: a.right_id, left_hash: leftHash, right_hash: rightHash, identical: leftHash === rightHash, comparison: 'full_definition_including_metadata' };
+    }
+    case 'webcore_bulk_pause_resume': {
+      const ids = a.ids;
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20 || new Set(ids).size !== ids.length) throw new Error('Provide 1-20 unique piston IDs.');
+      const inventory = await c.listPistons();
+      const known = new Set(inventory.map(p => p.id ?? p.i));
+      for (const id of ids) if (!known.has(id)) throw new Error('Unknown piston ID in requested batch: ' + id);
+      if (a.dry_run !== false) return { dry_run: true, operation: a.operation, ids, count: ids.length };
+      if (a.authorize_live_command !== true) throw new Error('Bulk piston mutation requires explicit authorization.');
+      const results = [];
+      for (const id of ids) {
+        try {
+          const result = a.operation === 'pause' ? await c.pausePiston(id) : await c.resumePiston(id);
+          results.push({ id, ok: true, result });
+        } catch (error) {
+          results.push({ id, ok: false, error: error.message });
+          return { operation: a.operation, stopped_on_error: true, results, remaining_ids: ids.slice(results.length), rollback_automatic: false };
+        }
+      }
+      return { operation: a.operation, stopped_on_error: false, results, rollback_automatic: false };
+    }
+    case 'webcore_piston_backup': {
+      const definition = await c.getPiston(a.id);
+      return { id: a.id, hash: hashJson(definition), definition, backup_type: 'live_definition', restored: false };
+    }
+    case 'webcore_find_piston_references': {
+      const inventory = await c.listPistons();
+      if (!Array.isArray(inventory)) throw new Error('Unrecognized piston inventory.');
+      const limit = a.limit ?? 50;
+      if (inventory.length > limit) throw new Error('Piston inventory exceeds requested limit.');
+      const matches = [];
+      const needle = a.text.toLowerCase();
+      const visit = (value, id, path, depth) => {
+        if (depth > 40 || matches.length >= 500 || value == null) return;
+        if (typeof value === 'string') {
+          if (value.toLowerCase().includes(needle)) matches.push({ piston_id: id, path, preview: value.slice(0, 200) });
+        } else if (Array.isArray(value)) {
+          value.slice(0, 2000).forEach((child, i) => visit(child, id, path + '[' + i + ']', depth + 1));
+        } else if (typeof value === 'object') {
+          Object.entries(value).slice(0, 2000).forEach(([key, child]) => visit(child, id, path + '.' + key.slice(0, 60), depth + 1));
+        }
+      };
+      for (const item of inventory) {
+        if (matches.length >= 500) break;
+        const id = item.id ?? item.i;
+        if (typeof id !== 'string') throw new Error('Invalid piston ID in inventory.');
+        visit(await c.getPiston(id), id, '$', 0);
+      }
+      return { matches, scanned: inventory.length, truncated: matches.length >= 500 };
+    }
+    case 'webcore_status': {
+      const r = await c.getDashboard();
+      return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo?.snapshot_source ?? null, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null };
+    }
     case 'webcore_diagnose': return runDiagnostics(c);
     case 'webcore_list_devices': return { devices: await c.listDevices() };
     case 'webcore_get_device': {
