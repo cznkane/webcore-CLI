@@ -108,10 +108,13 @@ export class HubitatClient {
     try { parsed = JSON.parse(raw); } catch { throw new Error('Hubitat returned invalid log JSON.'); }
     if (!Array.isArray(parsed)) throw new Error('Hubitat returned an unrecognized log payload.');
     const entries = parsed.filter(line => typeof line === 'string' && line.length <= 10000).map(line => {
-      const match = line.match(/^([^\\t]+)\\t([A-Z]+)\\s*\\t?(dev|app)\\|([0-9]+)\\|([^\\t]*)\\t?(.*)$/i);
-      if (!match) return { raw: line.slice(0, 2000) };
-      const [, time, severity, type, id, name, message] = match;
-      return { time: time.trim(), level: severity.toLowerCase(), type: type.toLowerCase(), id, name: name.replace(/<[^>]*>/g, '').slice(0, 150), message: message.slice(0, 2000) };
+      const parts = line.split(String.fromCharCode(9));
+      const time = parts[0]?.trim();
+      const severity = parts[1]?.trim().toLowerCase();
+      const detail = parts.slice(2).join(' ').trim();
+      const source = detail.match(/^(dev|app)[|]([0-9]+)[|]([^|]*?)(?:[|]|\\s{2,}|$)/i);
+      if (!source) return { raw: line.slice(0, 2000) };
+      return { time, level: severity, type: source[1].toLowerCase(), id: source[2], name: source[3].replace(/<[^>]*>/g, '').slice(0, 150), message: detail.slice(source[0].length).trim().slice(0, 2000) };
     });
     const filtered = entries.filter(entry => (deviceId === undefined || (entry.type === 'dev' && entry.id === String(deviceId))) && (level === undefined || entry.level === level) && (contains === undefined || JSON.stringify(entry).toLowerCase().includes(contains.toLowerCase())));
     return { source: 'hubitat_past_logs', device_id: deviceId == null ? null : String(deviceId), entries: filtered.slice(-limit), returned: Math.min(filtered.length, limit), total_matching: filtered.length, truncated: filtered.length > limit, historical_only: true };
