@@ -10,7 +10,7 @@ Tracking: #19. Implementation PR: #20.
 | Detailed device inventory | `hubitat_list_device_details` | Read |
 | Device attributes and details | `hubitat_get_device` | Read |
 | Recent device events | `hubitat_get_device_events` | Read |
-| Device diagnostic snapshot | `hubitat_get_device_snapshot` | Read |
+| Historical driver and app logs (opt-in admin endpoint) | `hubitat_get_driver_logs` | Read, local opt-in |\n| Device diagnostic snapshot | `hubitat_get_device_snapshot` | Read |
 | Device supported commands | `hubitat_get_device_commands` | Read |
 | One device attribute | `hubitat_get_device_attribute` | Read |
 | Modes inventory | `hubitat_list_modes` | Read |
@@ -39,7 +39,7 @@ Maker API authorization is controlled on the hub. Unsupported or unauthorized en
 
 ## Not provided by these APIs
 
-- **Hubitat platform driver/app logs**: Maker API device events are **not** platform log entries. This connector does not claim to read the Logs UI or live driver debug lines. Requires a separately authenticated, supported log interface or an explicitly installed on-hub log-forwarding integration.
+- **Live streaming driver/app logs**: this release implements historical logs via the hub's local `/logs/past/json` endpoint, but not live WebSocket `/logsocket` streaming. The historical endpoint is separate from Maker API, is not a stable public API, and may require an authenticated admin session on some hub configurations. Set `hubitat.logsEnabled=true` in the private local config to opt in; never send Maker API credentials to the admin log endpoint. Filter by `deviceId` to restrict to an authorized Maker API device.
 - **Hub administration, firmware, hub backup, arbitrary Groovy execution, Zigbee/Z-Wave radio management**: not Maker API features; deliberately not exposed through this credential.
 - **Maker API multiple positional device command arguments**: not safely represented by the single optional secondary value endpoint; not exposed.
 - **Hubitat lock/unlock and PIN-code management**: not exposed through the generic command tool.
