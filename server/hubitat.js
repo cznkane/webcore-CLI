@@ -7,6 +7,7 @@ export class HubitatClient {
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     this.appId = String(config.appId);
     this.accessToken = config.accessToken;
+    this.logsEnabled = config.logsEnabled === true;
   }
 
   async request(path) {
@@ -69,6 +70,51 @@ export class HubitatClient {
       throw error;
     }
     return { device_id: String(id), command, result: await this.request(`devices/${encodeURIComponent(id)}/${command}`) };
+  }
+
+  async getDriverLogs({ deviceId, limit = 100, level, contains } = {}) {
+    if (this.logsEnabled !== true) {
+      const error = new Error('Hubitat admin log access is disabled. Set hubitat.logsEnabled=true in the local private configuration.');
+      error.code = 'HUBITAT_LOGS_DISABLED';
+      throw error;
+    }
+    if (!Number.isInteger(limit) || limit < 1 || limit > 500) throw new Error('Log limit must be 1 to 500.');
+    if (deviceId !== undefined && !/^[0-9]+$/.test(String(deviceId))) throw new Error('Numeric device ID required.');
+    if (level !== undefined && !['error', 'warn', 'info', 'debug', 'trace'].includes(level)) throw new Error('Invalid log level.');
+    if (contains !== undefined && (typeof contains !== 'string' || contains.length > 100)) throw new Error('Log search must be 100 characters or fewer.');
+    if (deviceId !== undefined) {
+      const devices = await this.listDevices();
+      if (!Array.isArray(devices) || !devices.some(device => String(device.id) === String(deviceId))) {
+        const error = new Error('Device is not authorized by Maker API.');
+        error.code = 'HUBITAT_DEVICE_NOT_AUTHORIZED';
+        throw error;
+      }
+    }
+    const origin = new URL(this.baseUrl);
+    if (origin.protocol !== 'http:' && origin.protocol !== 'https:') throw new Error('Hubitat logs require an HTTP(S) hub origin.');
+    if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/') throw new Error('Hubitat logs require a plain local hub origin.');
+    const response = await fetch(new URL('/logs/past/json', origin), { method: 'GET', headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(8000) });
+    if (!response.ok) {
+      const error = new Error('Hubitat past logs request failed.');
+      error.code = 'HUBITAT_LOGS_HTTP_ERROR';
+      error.details = { status: response.status };
+      throw error;
+    }
+    const declaredSize = Number(response.headers?.get?.('content-length') ?? 0);
+    if (declaredSize > 2_000_000) throw new Error('Hubitat log response exceeds 2 MB.');
+    const raw = await response.text();
+    if (raw.length > 2_000_000) throw new Error('Hubitat log response exceeds 2 MB.');
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch { throw new Error('Hubitat returned invalid log JSON.'); }
+    if (!Array.isArray(parsed)) throw new Error('Hubitat returned an unrecognized log payload.');
+    const entries = parsed.filter(line => typeof line === 'string' && line.length <= 10000).map(line => {
+      const match = line.match(/^([^\\t]+)\\t([A-Z]+)\\s*\\t?(dev|app)\\|([0-9]+)\\|([^\\t]*)\\t?(.*)$/i);
+      if (!match) return { raw: line.slice(0, 2000) };
+      const [, time, severity, type, id, name, message] = match;
+      return { time: time.trim(), level: severity.toLowerCase(), type: type.toLowerCase(), id, name: name.replace(/<[^>]*>/g, '').slice(0, 150), message: message.slice(0, 2000) };
+    });
+    const filtered = entries.filter(entry => (deviceId === undefined || (entry.type === 'dev' && entry.id === String(deviceId))) && (level === undefined || entry.level === level) && (contains === undefined || JSON.stringify(entry).toLowerCase().includes(contains.toLowerCase())));
+    return { source: 'hubitat_past_logs', device_id: deviceId == null ? null : String(deviceId), entries: filtered.slice(-limit), returned: Math.min(filtered.length, limit), total_matching: filtered.length, truncated: filtered.length > limit, historical_only: true };
   }
 
   async listModes() {
