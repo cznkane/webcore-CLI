@@ -71,6 +71,26 @@ export class HubitatClient {
     return { device_id: String(id), command, result: await this.request(`devices/${encodeURIComponent(id)}/${command}`) };
   }
 
+  async listModes() {
+    const result = await this.request('modes');
+    if (!Array.isArray(result)) {
+      const error = new Error('Hubitat returned an unrecognized modes response.');
+      error.code = 'HUBITAT_MODES_UNSUPPORTED';
+      throw error;
+    }
+    return result;
+  }
+
+  async getCurrentMode() {
+    const result = await this.request('mode');
+    if (result == null || typeof result !== 'object' || Array.isArray(result)) {
+      const error = new Error('Hubitat returned an unrecognized current mode response.');
+      error.code = 'HUBITAT_MODE_UNSUPPORTED';
+      throw error;
+    }
+    return result;
+  }
+
   async listDevices() {
     return this.request('devices');
   }
