@@ -8,6 +8,7 @@ export class HubitatClient {
     this.appId = String(config.appId);
     this.accessToken = config.accessToken;
     this.logsEnabled = config.logsEnabled === true;
+    this.eventCallbackHost = config.eventCallbackHost ?? null;
   }
 
   async request(path) {
@@ -173,14 +174,53 @@ export class HubitatClient {
     return this.request(`devices/${encodeURIComponent(id)}/attribute/${encodeURIComponent(attribute)}`);
   }
 
-  async listHubVariables() { return this.request('hubvariables'); }
+  async setMode(modeId, authorized = false) {
+    if (authorized !== true) throw new Error('Explicit authorization required for mode changes.');
+    if (!/^[0-9]+$/.test(String(modeId))) throw new Error('Numeric mode ID required.');
+    const modes = await this.listModes();
+    const target = modes.find(mode => String(mode.id) === String(modeId));
+    if (!target) throw new Error('Mode ID is not present in the Maker API mode inventory.');
+    const result = await this.request(`modes/${encodeURIComponent(String(modeId))}`);
+    return { mode_id: String(modeId), mode_name: target.name, result, verified: false };
+  }
 
-  async getHubVariable(name) {
-    if (typeof name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_ -]{0,79}$/.test(name)) throw new Error('Invalid hub variable name.');
-    const inventory = await this.listHubVariables();
-    const found = Array.isArray(inventory) ? inventory.some(item => (typeof item === 'string' ? item : item?.name) === name) : inventory && typeof inventory === 'object' && Object.hasOwn(inventory, name);
-    if (!found) throw new Error('Hub variable is not exposed by this Maker API instance.');
-    return this.request(`hubvariables/${encodeURIComponent(name)}`);
+  async setHsm(command, authorized = false) {
+    if (authorized !== true) throw new Error('Explicit authorization required for HSM changes.');
+    if (!['armAway', 'armHome', 'armNight', 'disarm'].includes(command)) throw new Error('Unsupported HSM command.');
+    await this.getHsmStatus();
+    const result = await this.request(`hsm/${command}`);
+    return { command, result, verified: false };
+  }
+
+  async sendDeviceCommandArgs(id, command, args, authorized = false) {
+    if (authorized !== true) throw new Error('Explicit authorization required for live device commands.');
+    if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric device ID required.');
+    if (typeof command !== 'string' || !/^[a-zA-Z][a-zA-Z0-9]{0,79}$/.test(command)) throw new Error('Invalid command.');
+    if (/^(?:setCode|deleteCode|setLockCode|unlock|lock|setPin|setPassword|setUserCode|deleteUserCode)$/i.test(command)) throw new Error('Security-sensitive command blocked.');
+    if (!Array.isArray(args) || args.length > 6 || !args.every(v => (typeof v === 'string' && v.length <= 100 && !v.includes(',')) || (typeof v === 'number' && Number.isFinite(v)) || typeof v === 'boolean')) throw new Error('Arguments must be an array of up to six bounded scalar values, without commas.');
+    const detail = await this.getAuthorizedDevice(id);
+    if (!Array.isArray(detail?.commands) || !detail.commands.some(item => (typeof item === 'string' ? item : item?.command ?? item?.name) === command)) throw new Error('Command is not advertised by this device.');
+    const suffix = args.length ? '/' + encodeURIComponent(args.map(String).join(',')) : '';
+    const result = await this.request(`devices/${encodeURIComponent(String(id))}/${command}${suffix}`);
+    return { device_id: String(id), command, argument_count: args.length, result };
+  }
+
+  async setEventCallback(url, authorized = false) {
+    if (authorized !== true) throw new Error('Explicit authorization required to replace the Maker API event callback.');
+    if (typeof url !== 'string' || url.length > 400) throw new Error('Callback URL is required and limited to 400 characters.');
+    let parsed;
+    try { parsed = new URL(url); } catch { throw new Error('Invalid callback URL.'); }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.hash || !parsed.hostname || parsed.port && parsed.port !== '443') throw new Error('Event callback must be an HTTPS URL without embedded credentials, fragments, or custom ports.');
+    if (!this.eventCallbackHost || parsed.hostname.toLowerCase() !== this.eventCallbackHost.toLowerCase()) throw new Error('Callback host is not preapproved in hubitat.eventCallbackHost.');
+    const result = await this.request(`postURL/${encodeURIComponent(url)}`);
+    return { configured: true, callback_host: parsed.hostname, result };
+  }
+
+  async clearEventCallback(authorized = false) {
+    if (authorized !== true) throw new Error('Explicit authorization required to remove the Maker API event callback.');
+    if (!this.eventCallbackHost) throw new Error('Event callback management is not configured.');
+    const result = await this.request('postURL');
+    return { configured: false, result };
   }
 
   async getHsmStatus() { return this.request('hsm'); }
