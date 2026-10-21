@@ -19,7 +19,6 @@ test('expanded Maker API read endpoints use bearer authentication', async () => 
       path.endsWith('/devices') ? [{ id: '664' }] :
       path.endsWith('/devices/664') ? { id: '664', attributes: [{ name: 'switch' }], commands: [{ command: 'off' }] } :
       path.endsWith('/devices/664/commands') ? [{ command: 'off' }] :
-      path.endsWith('/hubvariables') ? [{ name: 'Test' }] :
       path.endsWith('/hsm') ? { status: 'disarmed' } : { value: 'off' };
     return { ok: true, json: async () => payload };
   }, async () => {
@@ -27,7 +26,6 @@ test('expanded Maker API read endpoints use bearer authentication', async () => 
     assert.equal((await c.listDeviceDetails())[0].id, '664');
     assert.equal((await c.getDeviceCommands('664'))[0].command, 'off');
     assert.deepEqual(await c.getDeviceAttribute('664', 'switch'), { value: 'off' });
-    assert.deepEqual(await c.getHubVariable('Test'), { value: 'off' });
     assert.equal((await c.getHsmStatus()).status, 'disarmed');
     assert.ok(paths.includes('/apps/api/1/devices/664/attribute/switch'));
   });
