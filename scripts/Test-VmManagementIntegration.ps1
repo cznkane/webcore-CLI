@@ -181,7 +181,10 @@ test('descendant containment',()=>{const child=spawn(process.execPath,['-e','set
  $request=Invoke-Operator $scope;Invoke-Operator @{action='approve';requestId=$request.requestId}|Out-Null;$completed=Await-Request $request.requestId
  Assert ($completed.status-eq 'succeeded') ("controlled service restart: "+($completed.result|ConvertTo-Json -Compress))
  Assert ([Convert]::ToBase64String([IO.File]::ReadAllBytes($yaml)) -eq [Convert]::ToBase64String($originalYaml)) 'restart preserves exact original YAML bytes'
- $main=Invoke-RestMethod -Uri 'https://api.github.com/repos/cznkane/webcore-CLI/branches/main' -Headers @{'User-Agent'='SmartHome-CI'}
+ $githubHeaders=@{'User-Agent'='SmartHome-CI';'Accept'='application/vnd.github+json'}
+  if ($env:GITHUB_TOKEN) { $githubHeaders['Authorization']='Bearer '+$env:GITHUB_TOKEN }
+  elseif ($env:GH_TOKEN) { $githubHeaders['Authorization']='Bearer '+$env:GH_TOKEN }
+  $main=Invoke-RestMethod -Uri 'https://api.github.com/repos/cznkane/webcore-CLI/branches/main' -Headers $githubHeaders
  $commit=[string]$main.commit.sha;$archive=Join-Path $fixture 'merged-release.zip'
  Invoke-WebRequest -UseBasicParsing -Uri "https://codeload.github.com/cznkane/webcore-CLI/zip/$commit" -OutFile $archive
  $digest=(Get-FileHash $archive).Hash.ToLowerInvariant()
