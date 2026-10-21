@@ -91,6 +91,66 @@ export class HubitatClient {
     return result;
   }
 
+  async listDeviceDetails() {
+    const result = await this.request('devices/all');
+    if (!Array.isArray(result) && (result == null || typeof result !== 'object')) throw new Error('Invalid detailed device inventory.');
+    return result;
+  }
+
+  async getAuthorizedDevice(id) {
+    if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric device ID required.');
+    const inventory = await this.listDevices();
+    if (!Array.isArray(inventory) || !inventory.some(device => String(device.id) === String(id))) {
+      const error = new Error('Device is not authorized by Maker API.');
+      error.code = 'HUBITAT_DEVICE_NOT_AUTHORIZED';
+      throw error;
+    }
+    return this.getDevice(id);
+  }
+
+  async getDeviceCommands(id) {
+    await this.getAuthorizedDevice(id);
+    const result = await this.request(`devices/${encodeURIComponent(id)}/commands`);
+    if (!Array.isArray(result) && (result == null || typeof result !== 'object')) throw new Error('Unrecognized commands payload.');
+    return result;
+  }
+
+  async getDeviceAttribute(id, attribute) {
+    if (typeof attribute !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]{0,79}$/.test(attribute)) throw new Error('Invalid attribute name.');
+    const device = await this.getAuthorizedDevice(id);
+    const attributes = device?.attributes;
+    const known = Array.isArray(attributes) ? attributes.some(item => (typeof item === 'string' ? item : item?.name) === attribute) : attributes && typeof attributes === 'object' && Object.hasOwn(attributes, attribute);
+    if (!known) throw new Error('Attribute is not listed on the authorized device.');
+    return this.request(`devices/${encodeURIComponent(id)}/attribute/${encodeURIComponent(attribute)}`);
+  }
+
+  async listHubVariables() { return this.request('hubvariables'); }
+
+  async getHubVariable(name) {
+    if (typeof name !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_ -]{0,79}$/.test(name)) throw new Error('Invalid hub variable name.');
+    const inventory = await this.listHubVariables();
+    const found = Array.isArray(inventory) ? inventory.some(item => (typeof item === 'string' ? item : item?.name) === name) : inventory && typeof inventory === 'object' && Object.hasOwn(inventory, name);
+    if (!found) throw new Error('Hub variable is not exposed by this Maker API instance.');
+    return this.request(`hubvariables/${encodeURIComponent(name)}`);
+  }
+
+  async getHsmStatus() { return this.request('hsm'); }
+
+  async sendDeviceCommand(id, command, value, authorized = false) {
+    if (authorized !== true) throw new Error('Explicit authorization required to execute a live device command.');
+    if (!/^[0-9]+$/.test(String(id))) throw new Error('Numeric device ID required.');
+    if (typeof command !== 'string' || !/^[a-zA-Z][a-zA-Z0-9]{0,79}$/.test(command)) throw new Error('Invalid command.');
+    if (['setCode', 'deleteCode', 'setLockCode', 'unlock', 'lock', 'setPin', 'setPassword'].includes(command)) throw new Error('Security-sensitive commands are not exposed by this tool.');
+    if (value !== undefined && (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean')) throw new Error('Only scalar command arguments are supported.');
+    if (value !== undefined && String(value).length > 100) throw new Error('Command argument exceeds 100 characters.');
+    const detail = await this.getAuthorizedDevice(id);
+    const commands = detail?.commands;
+    const supported = Array.isArray(commands) && commands.some(item => (typeof item === 'string' ? item : item?.command ?? item?.name) === command);
+    if (!supported) throw new Error('Command is not advertised by the authorized device.');
+    const suffix = value === undefined ? '' : `/${encodeURIComponent(String(value))}`;
+    return { device_id: String(id), command, result: await this.request(`devices/${encodeURIComponent(id)}/${command}${suffix}`) };
+  }
+
   async listDevices() {
     return this.request('devices');
   }
