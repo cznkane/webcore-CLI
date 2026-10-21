@@ -26,6 +26,8 @@ const tools = [
   { name: 'hubitat_get_device_snapshot', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Get authorized device details and event history.', inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 1 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['id'], additionalProperties: false } },
   { name: 'hubitat_set_switch', annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }, description: 'Operate an authorized switch only with explicit live command authorization.', inputSchema: { type: 'object', properties: { id: { type: 'string', minLength: 1 }, command: { type: 'string', enum: ['on', 'off'] }, authorize_live_command: { type: 'boolean', const: true } }, required: ['id', 'command', 'authorize_live_command'], additionalProperties: false } },
   { name: 'webcore_refresh_device_states', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read current authorized webCoRE device states.', inputSchema: { type: 'object', properties: {}, required: [], additionalProperties: false } },
+  { name: 'hubitat_list_modes', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List available Hubitat location modes using Maker API.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
+  { name: 'hubitat_get_current_mode', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read the current Hubitat location mode using Maker API.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'hubitat_get_device_events', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read up to 100 recent events for an authorized Hubitat device. No commands.', inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9]+$' }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['id'], additionalProperties: false } },
 
   { name: 'webcore_status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Check the configured local or explicitly approved Hubitat Cloud connection. Report live webcore_version (coreVersion) and webcore_he_version (heVersion), separately from plugin_version. Call before drafting conditions; do not infer the live webCoRE version from the bundled reference or a screenshot. Uses a dedicated dashboard session; snapshot_source distinguishes a new hub snapshot from a fresh unchanged confirmation. HTTP 200 alone is insufficient.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -59,7 +61,7 @@ async function invoke(name, a) {
     currentConfigHash = configHash;
   }
   const c = currentClient;
-  if (name === 'hubitat_list_devices' || name === 'hubitat_get_device' || name === 'hubitat_get_device_events' || name === 'hubitat_set_switch' || name === 'hubitat_get_device_snapshot') {
+  if (name === 'hubitat_list_devices' || name === 'hubitat_get_device' || name === 'hubitat_get_device_events' || name === 'hubitat_set_switch' || name === 'hubitat_get_device_snapshot' || name === 'hubitat_list_modes' || name === 'hubitat_get_current_mode') {
     if (!config.hubitat) throw new Error('Hubitat Maker API is not configured.');
 
     const hubitat = new HubitatClient(config.hubitat);
@@ -67,6 +69,9 @@ async function invoke(name, a) {
     if (name === 'hubitat_list_devices') {
       return { devices: await hubitat.listDevices() };
     }
+
+    if (name === 'hubitat_list_modes') return { modes: await hubitat.listModes() };
+    if (name === 'hubitat_get_current_mode') return { mode: await hubitat.getCurrentMode() };
 
     if (name === 'hubitat_get_device_snapshot') return hubitat.getDeviceSnapshot(a.id, a.limit ?? 50);
 
