@@ -28,6 +28,9 @@ const tools = [
   { name: 'hubitat_get_device_snapshot', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read device details and events.', inputSchema: { type: 'object', properties: { id: { type: 'string', pattern: '^[0-9]+ annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read fresh states for authorized webCoRE devices.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_export_pistons', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Export up to 100 piston definitions in a bounded JSON snapshot.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false } },
   { name: 'webcore_analyze_pistons', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Analyze up to 100 pistons for device references, repeated references and missing authorized devices.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 } }, additionalProperties: false } },
+  { name: 'webcore_piston_health_report', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Read a bounded inventory and identify paused pistons and missing status metadata.', inputSchema: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 200 } }, required: [], additionalProperties: false } },
+  { name: 'webcore_compare_piston_definitions', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Compare two live piston definitions using deterministic content hashes; does not mutate.', inputSchema: { type: 'object', properties: { left_id: { type: 'string', minLength: 1 }, right_id: { type: 'string', minLength: 1 } }, required: ["left_id","right_id"], additionalProperties: false } },
+  { name: 'webcore_bulk_pause_resume', annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }, description: 'Pause or resume up to 20 exact pistons. Requires explicit authorization and defaults to dry-run.', inputSchema: { type: 'object', properties: { ids: { type: 'array', minItems: 1, maxItems: 20, items: { type: 'string', minLength: 1 } }, operation: { type: 'string', enum: ['pause','resume'] }, authorize_live_command: { type: 'boolean', const: true }, dry_run: { type: 'boolean' } }, required: ["ids","operation"], additionalProperties: false } },
   { name: 'webcore_status', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Check the configured local or explicitly approved Hubitat Cloud connection. Report live webcore_version (coreVersion) and webcore_he_version (heVersion), separately from plugin_version. Call before drafting conditions; do not infer the live webCoRE version from the bundled reference or a screenshot. Uses a dedicated dashboard session; snapshot_source distinguishes a new hub snapshot from a fresh unchanged confirmation. HTTP 200 alone is insufficient.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_diagnose', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'Run read-only connection, dashboard response, piston-list, and authorized-device checks. Reports the running plugin_version and upload limits so installed/local version mismatches can be identified. Call after a tool error, unexpected empty result, or mismatch with the CLI. It retries empty piston results and returns sanitized status/content-type/error details without endpoint URLs, access tokens, session tokens, piston names, or device IDs. Upload failures also carry request_trace in their error details; do not perform a write just to diagnose it. Uses the shared dashboard change-detection protocol. transport_ok describes HTTP/parsing only; dashboard ok requires a usable session snapshot. Inspect snapshot_source and load_attempts. Missing/malformed/duplicate piston records are errors, never zero counts.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   { name: 'webcore_list_devices', annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }, description: 'List devices selected and authorized in this webCoRE instance, with capabilities, attributes, current values, commands and argument constraints.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
@@ -124,6 +127,44 @@ async function invoke(name, a) {
       };
       for (const entry of definitions) visit(entry.definition, entry.id);
       return { piston_count: definitions.length, references: refs.slice(0, 1000), reference_count: refs.length, incomplete: refs.length > 1000, heuristic: true };
+    }
+    case 'webcore_piston_health_report': {
+      const pistons = await c.listPistons();
+      if (!Array.isArray(pistons)) throw new Error('Unrecognized piston inventory.');
+      const limit = a.limit ?? 100;
+      if (pistons.length > limit) throw new Error('Inventory exceeds requested report limit.');
+      return { count: pistons.length, pistons: pistons.map(p => ({
+        id: p.id ?? p.i, name: p.name ?? p.n,
+        paused: p.paused ?? p.p ?? null,
+        state: p.state ?? p.s ?? null,
+        status_available: p.paused !== undefined || p.p !== undefined || p.state !== undefined || p.s !== undefined
+      })), metadata_only: true };
+    }
+    case 'webcore_compare_piston_definitions': {
+      if (a.left_id === a.right_id) throw new Error('Provide two different piston IDs.');
+      const [left, right] = await Promise.all([c.getPiston(a.left_id), c.getPiston(a.right_id)]);
+      const leftHash = hashJson(left), rightHash = hashJson(right);
+      return { left_id: a.left_id, right_id: a.right_id, left_hash: leftHash, right_hash: rightHash, identical: leftHash === rightHash, comparison: 'full_definition_including_metadata' };
+    }
+    case 'webcore_bulk_pause_resume': {
+      const ids = a.ids;
+      if (!Array.isArray(ids) || ids.length < 1 || ids.length > 20 || new Set(ids).size !== ids.length) throw new Error('Provide 1-20 unique piston IDs.');
+      const inventory = await c.listPistons();
+      const known = new Set(inventory.map(p => p.id ?? p.i));
+      for (const id of ids) if (!known.has(id)) throw new Error('Unknown piston ID in requested batch: ' + id);
+      if (a.dry_run !== false) return { dry_run: true, operation: a.operation, ids, count: ids.length };
+      if (a.authorize_live_command !== true) throw new Error('Bulk piston mutation requires explicit authorization.');
+      const results = [];
+      for (const id of ids) {
+        try {
+          const result = a.operation === 'pause' ? await c.pausePiston(id) : await c.resumePiston(id);
+          results.push({ id, ok: true, result });
+        } catch (error) {
+          results.push({ id, ok: false, error: error.message });
+          return { operation: a.operation, stopped_on_error: true, results, remaining_ids: ids.slice(results.length), rollback_automatic: false };
+        }
+      }
+      return { operation: a.operation, stopped_on_error: false, results, rollback_automatic: false };
     }
     case 'webcore_status': { const r = await c.getDashboard(); return { connected: true, dashboard_confirmed: true, snapshot_source: c.lastDashboardInfo.snapshot_source, plugin_version: packageInfo.version, connection_mode: c.config.connectionMode ?? 'local', hub: r.instance?.name ?? null, version: r.instance?.heVersion ?? r.instance?.coreVersion ?? null, webcore_version: r.instance?.coreVersion ?? null, webcore_he_version: r.instance?.heVersion ?? null }; }
     case 'webcore_diagnose': return runDiagnostics(c);
